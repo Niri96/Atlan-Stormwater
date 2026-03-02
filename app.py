@@ -5,9 +5,6 @@ from dataclasses import dataclass
 from math import ceil
 from typing import List, Dict
 
-# ----------------------------
-# Data models
-# ----------------------------
 @dataclass(frozen=True)
 class ProductOption:
     code: str
@@ -33,10 +30,6 @@ class Selection:
     total_cost_index: float
     notes: List[str]
 
-
-# ----------------------------
-# Config
-# ----------------------------
 PRODUCTS: List[ProductOption] = [
     ProductOption("ATLAN_FULL", "Atlan Filter (Full)", "ATLAN", 12.0, 2.80),
     ProductOption("ATLAN_HALF", "Atlan Filter (Half)", "ATLAN", 6.0, 1.70),
@@ -59,10 +52,6 @@ REGION_LABEL_TO_KEY = {
     "Rest of NZ": "REST_NZ",
 }
 
-
-# ----------------------------
-# Helpers
-# ----------------------------
 def normalize_region(region_label: str) -> str:
     if region_label not in REGION_LABEL_TO_KEY:
         raise ValueError(f"Unknown region: {region_label}")
@@ -126,9 +115,6 @@ def force_product(required_lps: float, region_key: str, product_code: str) -> Se
     )
 
 
-# ----------------------------
-# UI (Professional + branded)
-# ----------------------------
 st.set_page_config(page_title="Atlan Stormwater Sizing", layout="wide")
 
 st.markdown(
