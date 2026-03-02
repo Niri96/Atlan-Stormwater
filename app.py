@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import streamlit as st
 from dataclasses import dataclass
 from math import ceil
@@ -13,14 +12,12 @@ class ProductOption:
     capacity_lps_per_unit: float
     unit_cost_index: float
 
-
 @dataclass(frozen=True)
 class RainScenario:
     key: str
     name: str
     treatment_rain_mmph: float
     runoff_coeff: float
-
 
 @dataclass(frozen=True)
 class Selection:
@@ -33,10 +30,8 @@ class Selection:
 PRODUCTS: List[ProductOption] = [
     ProductOption("ATLAN_FULL", "Atlan Filter (Full)", "ATLAN", 12.0, 2.80),
     ProductOption("ATLAN_HALF", "Atlan Filter (Half)", "ATLAN", 6.0, 1.70),
-
     ProductOption("FLOW_400", "Flow Filter (400 Series)", "FLOW", 7.5, 1.60),
     ProductOption("FLOW_1500", "Flow Filter (1500 Series)", "FLOW", 15.0, 3.10),
-
     ProductOption("FLOWGUARD", "FlowGuard", "FLOWGUARD", 10.0, 2.40),
 ]
 
@@ -57,13 +52,11 @@ def normalize_region(region_label: str) -> str:
         raise ValueError(f"Unknown region: {region_label}")
     return REGION_LABEL_TO_KEY[region_label]
 
-
 def eligible_products(region_key: str) -> List[ProductOption]:
     # Auckland => only ATLAN + FLOWGUARD families
     if region_key == "AUCKLAND":
         return [p for p in PRODUCTS if p.family in ("ATLAN", "FLOWGUARD")]
     return list(PRODUCTS)
-
 
 def treatment_flow_lps(area_m2: float, treatment_rain_mmph: float, runoff_coeff: float) -> float:
     if area_m2 <= 0:
@@ -74,7 +67,6 @@ def treatment_flow_lps(area_m2: float, treatment_rain_mmph: float, runoff_coeff:
         raise ValueError("Runoff coefficient must be between 0 and 1")
     # (area m² * mm/hr * runoff_coeff) / 3600 = L/s (since 1 mm over 1 m² = 1 L)
     return (area_m2 * treatment_rain_mmph * runoff_coeff) / 3600.0
-
 
 def choose_cheapest(required_lps: float, region_key: str) -> Selection:
     candidates: List[Selection] = []
@@ -95,7 +87,6 @@ def choose_cheapest(required_lps: float, region_key: str) -> Selection:
     candidates.sort(key=lambda x: (x.total_cost_index, x.units, -x.product.capacity_lps_per_unit))
     return candidates[0]
 
-
 def force_product(required_lps: float, region_key: str, product_code: str) -> Selection:
     allowed = {p.code: p for p in eligible_products(region_key)}
     code = product_code.strip().upper()
@@ -113,7 +104,6 @@ def force_product(required_lps: float, region_key: str, product_code: str) -> Se
         total_cost_index=units * p.unit_cost_index,
         notes=[]
     )
-
 
 st.set_page_config(page_title="Atlan Stormwater Sizing", layout="wide")
 
