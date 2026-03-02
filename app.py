@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from math import ceil
 from typing import List, Dict
 
+# ----------------------------
+# Data models
+# ----------------------------
 @dataclass(frozen=True)
 class ProductOption:
     code: str
@@ -30,12 +33,14 @@ class Selection:
     total_cost_index: float
     notes: List[str]
 
+
+# ----------------------------
+# Config
+# ----------------------------
 PRODUCTS: List[ProductOption] = [
-    # ATLAN family examples (placeholder — set your real values)
     ProductOption("ATLAN_FULL", "Atlan Filter (Full)", "ATLAN", 12.0, 2.80),
     ProductOption("ATLAN_HALF", "Atlan Filter (Half)", "ATLAN", 6.0, 1.70),
 
-    # Your snippet (kept)
     ProductOption("FLOW_400", "Flow Filter (400 Series)", "FLOW", 7.5, 1.60),
     ProductOption("FLOW_1500", "Flow Filter (1500 Series)", "FLOW", 15.0, 3.10),
 
@@ -43,7 +48,6 @@ PRODUCTS: List[ProductOption] = [
 ]
 
 SCENARIOS: Dict[str, RainScenario] = {
-    # Replace these rainfall & coeffs with your actual internal spreadsheet assumptions
     "AUCKLAND": RainScenario("AUCKLAND", "Auckland", treatment_rain_mmph=10.0, runoff_coeff=0.90),
     "CHRISTCHURCH": RainScenario("CHRISTCHURCH", "Christchurch", treatment_rain_mmph=12.0, runoff_coeff=0.90),
     "REST_NZ": RainScenario("REST_NZ", "Rest of NZ", treatment_rain_mmph=15.0, runoff_coeff=0.90),
@@ -56,23 +60,31 @@ REGION_LABEL_TO_KEY = {
 }
 
 
+# ----------------------------
+# Helpers
+# ----------------------------
 def normalize_region(region_label: str) -> str:
     if region_label not in REGION_LABEL_TO_KEY:
         raise ValueError(f"Unknown region: {region_label}")
     return REGION_LABEL_TO_KEY[region_label]
 
+
 def eligible_products(region_key: str) -> List[ProductOption]:
-    # Your rule: Auckland => only ATLAN + FLOWGUARD families
+    # Auckland => only ATLAN + FLOWGUARD families
     if region_key == "AUCKLAND":
         return [p for p in PRODUCTS if p.family in ("ATLAN", "FLOWGUARD")]
     return list(PRODUCTS)
 
 
-def treatment_flow_lps(area_m2: float, scenario: RainScenario) -> float:
+def treatment_flow_lps(area_m2: float, treatment_rain_mmph: float, runoff_coeff: float) -> float:
     if area_m2 <= 0:
         raise ValueError("Impervious area must be > 0 m²")
+    if treatment_rain_mmph <= 0:
+        raise ValueError("Treatment rainfall must be > 0 mm/hr")
+    if not (0.0 <= runoff_coeff <= 1.0):
+        raise ValueError("Runoff coefficient must be between 0 and 1")
     # (area m² * mm/hr * runoff_coeff) / 3600 = L/s (since 1 mm over 1 m² = 1 L)
-    return (area_m2 * scenario.treatment_rain_mmph * scenario.runoff_coeff) / 3600.0
+    return (area_m2 * treatment_rain_mmph * runoff_coeff) / 3600.0
 
 
 def choose_cheapest(required_lps: float, region_key: str) -> Selection:
@@ -112,6 +124,7 @@ def force_product(required_lps: float, region_key: str, product_code: str) -> Se
         total_cost_index=units * p.unit_cost_index,
         notes=[]
     )
+
 
 st.set_page_config(page_title="Atlan Stormwater Sizing", layout="wide")
 
