@@ -112,12 +112,6 @@ def force_product(required_lps: float, region_key: str, product_code: str) -> Se
         total_cost_index=units * p.unit_cost_index,
         notes=[]
     )
-[theme]
-primaryColor="#0B5CFF"
-backgroundColor="#FFFFFF"
-secondaryBackgroundColor="#F5F7FF"
-textColor="#0B1220"
-font="sans serif"
 
 st.set_page_config(page_title="Atlan Stormwater Sizing", layout="wide")
 
