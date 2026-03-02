@@ -1,4 +1,4 @@
-from __future__ import annotations
+ffrom __future__ import annotations
 
 import streamlit as st
 from dataclasses import dataclass
@@ -126,16 +126,15 @@ def force_product(required_lps: float, region_key: str, product_code: str) -> Se
     )
 
 
+# ----------------------------
+# UI (Professional + branded)
+# ----------------------------
 st.set_page_config(page_title="Atlan Stormwater Sizing", layout="wide")
 
-# Light CSS polish (keeps it clean + “product-like”)
 st.markdown(
     """
     <style>
-      /* tighten top padding */
       .block-container { padding-top: 2rem; }
-
-      /* make primary button feel branded */
       div.stButton > button[kind="primary"] {
         background: #0B5CFF;
         border: 1px solid #0B5CFF;
@@ -147,8 +146,6 @@ st.markdown(
         background: #0749d1;
         border: 1px solid #0749d1;
       }
-
-      /* subtle card look */
       .atlan-card {
         border: 1px solid rgba(11, 92, 255, 0.12);
         background: #FFFFFF;
@@ -161,49 +158,46 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Header
 st.title("Atlan Stormwater Treatment Sizing")
-st.caption("Size treatment flow and select the most cost-effective eligible system for the chosen region.")
+st.caption("Enter site inputs to calculate treatment flow and select an eligible system.")
 
-# Sidebar inputs (feels like a real app)
+# Sidebar inputs
 with st.sidebar:
     st.header("Inputs")
 
     project = st.text_input("Project name", value="Demo Site")
+    region_label = st.selectbox("Region", ["Auckland", "Christchurch", "Rest of NZ"], index=0)
 
-    region_label = st.selectbox(
-        "Region",
-        ["Auckland", "Christchurch", "Rest of NZ"],
-        index=0,
-        help="Region determines the treatment rainfall scenario and eligible product families.",
+    region_key = normalize_region(region_label)
+    scenario = SCENARIOS[region_key]
+
+    st.markdown("### Hydraulic Inputs")
+    area_m2 = st.number_input("Impervious area (m²)", min_value=1.0, value=1500.0, step=50.0)
+
+    treatment_rain_mmph = st.number_input(
+        "Treatment rainfall (mm/hr)",
+        min_value=0.1,
+        value=float(scenario.treatment_rain_mmph),
+        step=0.5,
+        help="Default is loaded from region. You may override.",
     )
 
-    area_m2 = st.number_input(
-        "Impervious area (m²)",
-        min_value=1.0,
-        value=1500.0,
-        step=50.0,
-        help="Impervious catchment area contributing to treatment flow.",
+    runoff_coeff = st.number_input(
+        "Runoff coefficient",
+        min_value=0.0,
+        max_value=1.0,
+        value=float(scenario.runoff_coeff),
+        step=0.05,
+        help="Default is loaded from region. Typical range 0.7–1.0",
     )
 
     st.divider()
     st.header("Selection")
 
-    mode = st.radio(
-        "Mode",
-        ["Cheapest eligible", "Force product"],
-        horizontal=False,
-        help="Choose the cheapest eligible option or force a specific product code.",
-    )
+    mode = st.radio("Mode", ["Cheapest eligible", "Force product"], horizontal=False)
 
-    # show only eligible codes for the chosen region (when forcing)
+    eligible_codes = [p.code for p in eligible_products(region_key)]
     force_code = ""
-    try:
-        rk = normalize_region(region_label)
-        eligible_codes = [p.code for p in eligible_products(rk)]
-    except Exception:
-        eligible_codes = [p.code for p in PRODUCTS]
-
     if mode == "Force product":
         force_code = st.selectbox("Force product code", eligible_codes)
 
@@ -213,7 +207,8 @@ with st.sidebar:
         st.write("- **Auckland:** only **ATLAN** + **FLOWGUARD** families")
         st.write("- **Other regions:** all products allowed (as configured)")
 
-# Main layout
+
+# Main tabs
 tab1, tab2, tab3 = st.tabs(["Summary", "Comparison", "Assumptions"])
 
 with tab1:
@@ -221,16 +216,13 @@ with tab1:
         st.info("Enter inputs in the sidebar and click **Calculate**.")
     else:
         try:
-            region_key = normalize_region(region_label)
-            scenario = SCENARIOS[region_key]
-            required_lps = treatment_flow_lps(area_m2, scenario)
+            required_lps = treatment_flow_lps(area_m2, treatment_rain_mmph, runoff_coeff)
 
             if mode == "Force product":
                 selection = force_product(required_lps, region_key, force_code)
             else:
                 selection = choose_cheapest(required_lps, region_key)
 
-            # KPI strip
             k1, k2, k3, k4 = st.columns(4)
             k1.metric("Treatment flow (L/s)", f"{required_lps:.2f}")
             k2.metric("Recommended product", selection.product.code)
@@ -239,15 +231,14 @@ with tab1:
 
             st.write("")
 
-            # Recommendation card
             st.markdown('<div class="atlan-card">', unsafe_allow_html=True)
             st.subheader("Recommendation")
             st.write(f"**{selection.product.name}**  ·  `{selection.product.code}`")
             st.write(f"<span class='atlan-muted'>Project:</span> **{project}**", unsafe_allow_html=True)
             st.write(
-                f"<span class='atlan-muted'>Scenario:</span> **{scenario.name}**"
-                f"  ·  {scenario.treatment_rain_mmph:g} mm/hr × runoff {scenario.runoff_coeff:g}",
-                unsafe_allow_html=True
+                f"<span class='atlan-muted'>Inputs used:</span> "
+                f"**{treatment_rain_mmph:g} mm/hr × runoff {runoff_coeff:g}**",
+                unsafe_allow_html=True,
             )
 
             st.write("")
@@ -257,11 +248,9 @@ with tab1:
             c3.write(f"**Indicative cost index**  \n{selection.total_cost_index:.2f}")
             st.markdown("</div>", unsafe_allow_html=True)
 
-            # Guardrails / notes
             if selection.notes:
                 st.warning("**Notes**\n\n" + "\n".join([f"- {n}" for n in selection.notes]))
 
-            # Eligible products (compact)
             st.markdown("### Eligible products")
             elig = eligible_products(region_key)
             st.dataframe(
@@ -278,15 +267,12 @@ with tab1:
 
         except Exception as e:
             st.error(f"Couldn’t calculate: {e}")
-            st.stop()
 
 with tab2:
     if not submitted:
         st.info("Run a calculation first to see the comparison table.")
     else:
-        region_key = normalize_region(region_label)
-        scenario = SCENARIOS[region_key]
-        required_lps = treatment_flow_lps(area_m2, scenario)
+        required_lps = treatment_flow_lps(area_m2, treatment_rain_mmph, runoff_coeff)
         elig = eligible_products(region_key)
 
         st.subheader("Comparison (eligible options)")
@@ -307,16 +293,17 @@ with tab3:
     st.subheader("Assumptions")
     st.write("**Treatment flow (L/s)** = (Impervious area × Treatment rainfall × Runoff coefficient) ÷ 3600")
     st.write("Any flow above the treatment flow may bypass (site-specific).")
+
     st.write("")
-    st.write("**Region scenarios**")
-    scenario_rows = [
-        {
+    st.subheader("Region defaults (used as starting values)")
+    st.dataframe(
+        [{
             "Region": s.name,
             "Treatment rainfall (mm/hr)": s.treatment_rain_mmph,
-            "Runoff coefficient": s.runoff_coeff
-        }
-        for s in SCENARIOS.values()
-    ]
-    st.dataframe(scenario_rows, use_container_width=True, hide_index=True)
+            "Runoff coefficient": s.runoff_coeff,
+        } for s in SCENARIOS.values()],
+        use_container_width=True,
+        hide_index=True
+    )
 
 st.caption("Update PRODUCTS and SCENARIOS to match the latest Atlan spreadsheet assumptions.")
