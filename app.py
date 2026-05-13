@@ -6,6 +6,10 @@ from dataclasses import dataclass
 from typing import Dict, List
 
 
+# =========================================================
+# Data Models
+# =========================================================
+
 @dataclass(frozen=True)
 class RegionProfile:
     key: str
@@ -26,12 +30,20 @@ class Competitor:
     technical_score: int
 
 
+# =========================================================
+# Assumptions
+# =========================================================
+
+ATLAN_BLUE = "#0B5CFF"
+ATLAN_DARK = "#071B3A"
+ATLAN_LIGHT = "#EEF5FF"
+
 REGIONS: Dict[str, RegionProfile] = {
-    "QLD": RegionProfile("QLD", "Queensland", 1.05, 0.95, "High", "Competitive market with pricing pressure."),
-    "NSW": RegionProfile("NSW", "New South Wales", 1.10, 0.97, "High", "High-volume market with strong peer activity."),
+    "QLD": RegionProfile("QLD", "Queensland", 1.05, 0.95, "High", "Competitive pipe market with strong pricing pressure."),
+    "NSW": RegionProfile("NSW", "New South Wales", 1.10, 0.97, "High", "High-volume market with active peer competition."),
     "VIC": RegionProfile("VIC", "Victoria", 1.08, 1.00, "Medium", "Balanced market with room for value-led pricing."),
-    "WA": RegionProfile("WA", "Western Australia", 1.18, 1.05, "Medium", "Higher freight and regional supply costs."),
-    "SA": RegionProfile("SA", "South Australia", 1.12, 1.02, "Medium", "Moderate pricing pressure and freight sensitivity."),
+    "WA": RegionProfile("WA", "Western Australia", 1.18, 1.05, "Medium", "Higher freight exposure and regional supply cost."),
+    "SA": RegionProfile("SA", "South Australia", 1.12, 1.02, "Medium", "Moderate pricing pressure with freight sensitivity."),
 }
 
 COMPETITORS: List[Competitor] = [
@@ -55,6 +67,10 @@ PIPE_BASE_PRICE_PER_M: Dict[int, float] = {
     1200: 1250,
 }
 
+
+# =========================================================
+# Logic
+# =========================================================
 
 def quantity_discount(quantity_m: float) -> float:
     if quantity_m >= 1000:
@@ -91,7 +107,6 @@ def score_band(score: float) -> str:
 def win_probability(atlan_price: float, market_avg: float, atlan_score: float, competitor_avg_score: float) -> str:
     price_gap = (atlan_price - market_avg) / market_avg
     score_advantage = (atlan_score - competitor_avg_score) / 10
-
     adjusted_gap = price_gap - score_advantage
 
     if adjusted_gap <= -0.05:
@@ -107,23 +122,18 @@ def strategy_recommendation(
     atlan_price: float,
     market_avg: float,
     gross_margin: float,
-    region: RegionProfile,
 ) -> str:
     gap = (atlan_price - market_avg) / market_avg
 
     if gross_margin < 0.25:
-        return "Do not chase price too hard. Margin is already thin, so only discount if strategically important."
-
+        return "Margin is thin. Avoid over-discounting unless this is a strategic project."
     if gap > 0.12:
-        return "Atlan is materially above market. Either sharpen price or clearly justify the premium through engineering support, availability, and delivery certainty."
-
+        return "Atlan is materially above market. Sharpen price or clearly justify the premium."
     if gap > 0.04:
-        return "Atlan is slightly above market. Position as value-led, not cheapest. Emphasise service, design support, stock availability, and lower execution risk."
-
+        return "Atlan is slightly above market. Lead with service, availability, and engineering support."
     if gap >= -0.03:
         return "Atlan is market-aligned. Maintain pricing discipline and focus on conversion."
-
-    return "Atlan is pricing aggressively. Good win potential, but check that the discount is not eroding margin unnecessarily."
+    return "Atlan is pricing aggressively. Strong win potential, but check margin protection."
 
 
 def build_competitor_pricing_sheet(
@@ -151,32 +161,146 @@ def build_competitor_pricing_sheet(
 
         rows.append({
             "Competitor": c.name,
-            "Pricing position": c.pricing_position,
-            "Pipe size": f"{pipe_size_mm}mm",
-            "Quantity": quantity_m,
-            "Region": region.name,
+            "Positioning": c.pricing_position,
             "Price / m": round(price_per_m, 2),
             "Total price": round(total_price, 0),
-            "Service score": c.service_score,
-            "Delivery score": c.delivery_score,
-            "Technical score": c.technical_score,
-            "Overall capability score": round(total_score, 1),
+            "Service": c.service_score,
+            "Delivery": c.delivery_score,
+            "Technical": c.technical_score,
+            "Capability score": round(total_score, 1),
             "Capability band": score_band(total_score),
         })
 
     return pd.DataFrame(rows)
 
 
+# =========================================================
+# Page Setup
+# =========================================================
+
 st.set_page_config(
-    page_title="Competitor Pipe Pricing Tool",
+    page_title="Atlan Competitor Pricing Tool",
+    page_icon="💧",
     layout="wide",
 )
 
-st.title("Competitor Pipe Pricing Tool")
-st.caption("Generate an indicative competitor pricing sheet by pipe size, quantity, and region.")
+st.markdown(
+    f"""
+    <style>
+        .stApp {{
+            background: linear-gradient(180deg, #F5F9FF 0%, #FFFFFF 45%);
+        }}
+
+        .block-container {{
+            padding-top: 1.8rem;
+            padding-bottom: 3rem;
+            max-width: 1250px;
+        }}
+
+        .hero {{
+            background: linear-gradient(135deg, {ATLAN_BLUE} 0%, #003A9B 100%);
+            padding: 32px 36px;
+            border-radius: 24px;
+            color: white;
+            box-shadow: 0 18px 40px rgba(11, 92, 255, 0.22);
+            margin-bottom: 24px;
+        }}
+
+        .hero h1 {{
+            font-size: 38px;
+            margin-bottom: 8px;
+            font-weight: 800;
+        }}
+
+        .hero p {{
+            font-size: 17px;
+            opacity: 0.92;
+            max-width: 850px;
+        }}
+
+        .section-card {{
+            background: white;
+            border: 1px solid rgba(11, 92, 255, 0.12);
+            border-radius: 20px;
+            padding: 22px;
+            box-shadow: 0 10px 28px rgba(7, 27, 58, 0.06);
+            margin-bottom: 18px;
+        }}
+
+        .small-card {{
+            background: {ATLAN_LIGHT};
+            border: 1px solid rgba(11, 92, 255, 0.14);
+            border-radius: 16px;
+            padding: 16px;
+        }}
+
+        .muted {{
+            color: rgba(7, 27, 58, 0.65);
+            font-size: 14px;
+        }}
+
+        div.stButton > button[kind="primary"] {{
+            background: {ATLAN_BLUE};
+            border: 1px solid {ATLAN_BLUE};
+            border-radius: 14px;
+            padding: 0.75rem 1rem;
+            font-weight: 700;
+            width: 100%;
+        }}
+
+        div.stButton > button[kind="primary"]:hover {{
+            background: #0848C8;
+            border: 1px solid #0848C8;
+        }}
+
+        [data-testid="stMetricValue"] {{
+            color: {ATLAN_DARK};
+            font-weight: 800;
+        }}
+
+        [data-testid="stMetricLabel"] {{
+            color: rgba(7, 27, 58, 0.72);
+        }}
+
+        section[data-testid="stSidebar"] {{
+            background: #FFFFFF;
+            border-right: 1px solid rgba(11, 92, 255, 0.10);
+        }}
+
+        .stDataFrame {{
+            border-radius: 16px;
+            overflow: hidden;
+        }}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# =========================================================
+# Header
+# =========================================================
+
+st.markdown(
+    """
+    <div class="hero">
+        <h1>Atlan Stormwater Competitor Pricing Tool</h1>
+        <p>
+            Enter the pipe size, quantity and region to generate an indicative competitor pricing sheet,
+            market range, Atlan price position and suggested bid strategy.
+        </p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# =========================================================
+# Sidebar Inputs
+# =========================================================
 
 with st.sidebar:
-    st.header("Inputs")
+    st.markdown("## Pricing Inputs")
 
     pipe_size_mm = st.selectbox(
         "Pipe size",
@@ -199,7 +323,8 @@ with st.sidebar:
     )
 
     st.divider()
-    st.header("Atlan price inputs")
+
+    st.markdown("## Atlan Inputs")
 
     atlan_price_per_m = st.number_input(
         "Atlan proposed price / m",
@@ -215,12 +340,24 @@ with st.sidebar:
         step=5.0,
     )
 
-    atlan_service_score = st.slider("Atlan service score", 1, 10, 8)
-    atlan_delivery_score = st.slider("Atlan delivery score", 1, 10, 8)
-    atlan_technical_score = st.slider("Atlan technical score", 1, 10, 8)
+    st.markdown("### Capability Scores")
 
-    generate = st.button("Generate competitor pricing sheet", type="primary", use_container_width=True)
+    atlan_service_score = st.slider("Service", 1, 10, 8)
+    atlan_delivery_score = st.slider("Delivery", 1, 10, 8)
+    atlan_technical_score = st.slider("Technical", 1, 10, 8)
 
+    st.divider()
+
+    generate = st.button(
+        "Generate Pricing Sheet",
+        type="primary",
+        use_container_width=True,
+    )
+
+
+# =========================================================
+# Main App
+# =========================================================
 
 if generate:
     region = REGIONS[region_key]
@@ -244,7 +381,7 @@ if generate:
     atlan_price_gap = atlan_price_per_m - market_avg
     atlan_price_gap_pct = atlan_price_gap / market_avg
 
-    competitor_avg_score = df["Overall capability score"].mean()
+    competitor_avg_score = df["Capability score"].mean()
     atlan_score = (atlan_service_score + atlan_delivery_score + atlan_technical_score) / 3
 
     win_prob = win_probability(
@@ -254,7 +391,8 @@ if generate:
         competitor_avg_score,
     )
 
-    st.subheader("Market Summary")
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.subheader("Market Snapshot")
 
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Market low", f"${market_low:,.2f}/m")
@@ -268,100 +406,124 @@ if generate:
     k7.metric("Win probability", win_prob)
     k8.metric("Region competitiveness", region.competitiveness)
 
-    st.info(region.notes)
+    st.markdown(
+        f"""
+        <div class="small-card">
+            <b>{region.name} market note:</b><br>
+            <span class="muted">{region.notes}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("### Competitor Pricing Sheet")
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.subheader("Competitor Pricing Sheet")
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("### Atlan Positioning")
+    col_left, col_right = st.columns([1.1, 0.9])
 
-    positioning_rows = pd.DataFrame([
-        {
-            "Metric": "Atlan price / m",
-            "Value": f"${atlan_price_per_m:,.2f}",
-        },
-        {
-            "Metric": "Atlan total revenue",
-            "Value": f"${atlan_total_revenue:,.0f}",
-        },
-        {
-            "Metric": "Atlan estimated cost",
-            "Value": f"${atlan_total_cost:,.0f}",
-        },
-        {
-            "Metric": "Atlan gross profit",
-            "Value": f"${atlan_gross_profit:,.0f}",
-        },
-        {
-            "Metric": "Atlan gross margin",
-            "Value": f"{atlan_gross_margin:.1%}",
-        },
-        {
-            "Metric": "Market average price / m",
-            "Value": f"${market_avg:,.2f}",
-        },
-        {
-            "Metric": "Gap vs market average",
-            "Value": f"${atlan_price_gap:,.2f}/m ({atlan_price_gap_pct:.1%})",
-        },
-        {
-            "Metric": "Atlan capability score",
-            "Value": f"{atlan_score:.1f}/10",
-        },
-        {
-            "Metric": "Competitor average capability score",
-            "Value": f"{competitor_avg_score:.1f}/10",
-        },
-    ])
+    with col_left:
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.subheader("Atlan Positioning")
 
-    st.dataframe(positioning_rows, use_container_width=True, hide_index=True)
+        positioning = pd.DataFrame([
+            {"Metric": "Pipe size", "Value": f"{pipe_size_mm}mm"},
+            {"Metric": "Quantity", "Value": f"{quantity_m:,.0f}m"},
+            {"Metric": "Region", "Value": region.name},
+            {"Metric": "Atlan price / m", "Value": f"${atlan_price_per_m:,.2f}"},
+            {"Metric": "Market average / m", "Value": f"${market_avg:,.2f}"},
+            {"Metric": "Gap vs market", "Value": f"${atlan_price_gap:,.2f}/m ({atlan_price_gap_pct:.1%})"},
+            {"Metric": "Atlan total revenue", "Value": f"${atlan_total_revenue:,.0f}"},
+            {"Metric": "Gross profit", "Value": f"${atlan_gross_profit:,.0f}"},
+            {"Metric": "Gross margin", "Value": f"{atlan_gross_margin:.1%}"},
+            {"Metric": "Atlan capability score", "Value": f"{atlan_score:.1f}/10"},
+        ])
 
-    st.markdown("### Recommended Bid Strategy")
-    st.success(
-        strategy_recommendation(
+        st.dataframe(positioning, use_container_width=True, hide_index=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with col_right:
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.subheader("Recommended Bid Strategy")
+
+        recommendation = strategy_recommendation(
             atlan_price_per_m,
             market_avg,
             atlan_gross_margin,
-            region,
         )
-    )
 
-    st.markdown("### Suggested Pricing Scenarios")
+        st.success(recommendation)
+
+        st.markdown("#### Readout")
+        st.write(
+            f"Atlan is currently priced at **{atlan_price_gap_pct:.1%}** versus the estimated market average."
+        )
+        st.write(
+            f"The estimated win probability is **{win_prob}**, with a gross margin of **{atlan_gross_margin:.1%}**."
+        )
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.subheader("Suggested Pricing Scenarios")
 
     scenarios = pd.DataFrame([
         {
             "Scenario": "Aggressive",
             "Price / m": round(market_low * 0.99, 2),
             "Total revenue": round(market_low * 0.99 * quantity_m, 0),
-            "Gross margin": round(((market_low * 0.99) - atlan_cost_per_m) / (market_low * 0.99), 3),
-            "Use case": "Win priority / strategic job",
+            "Gross margin": f"{((market_low * 0.99) - atlan_cost_per_m) / (market_low * 0.99):.1%}",
+            "Best for": "Strategic win / defend share",
         },
         {
             "Scenario": "Market aligned",
             "Price / m": round(market_avg, 2),
             "Total revenue": round(market_avg * quantity_m, 0),
-            "Gross margin": round((market_avg - atlan_cost_per_m) / market_avg, 3),
-            "Use case": "Balanced win rate and margin",
+            "Gross margin": f"{(market_avg - atlan_cost_per_m) / market_avg:.1%}",
+            "Best for": "Balanced win rate and margin",
         },
         {
             "Scenario": "Premium",
             "Price / m": round(market_high * 0.98, 2),
             "Total revenue": round(market_high * 0.98 * quantity_m, 0),
-            "Gross margin": round(((market_high * 0.98) - atlan_cost_per_m) / (market_high * 0.98), 3),
-            "Use case": "Premium positioning / less price-sensitive buyer",
+            "Gross margin": f"{((market_high * 0.98) - atlan_cost_per_m) / (market_high * 0.98):.1%}",
+            "Best for": "Less price-sensitive customer",
         },
     ])
 
-    st.dataframe(scenarios, use_container_width=True, hide_index=True)
+    st.dataframe(
+        scenarios,
+        use_container_width=True,
+        hide_index=True,
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
 
     csv = df.to_csv(index=False)
 
     st.download_button(
-        label="Download competitor pricing sheet",
+        label="Download Competitor Pricing Sheet",
         data=csv,
-        file_name="competitor_pipe_pricing_sheet.csv",
+        file_name="atlan_competitor_pipe_pricing_sheet.csv",
         mime="text/csv",
+        use_container_width=True,
     )
 
 else:
-    st.info("Enter pipe size, quantity, region, and Atlan pricing inputs, then click generate.")
+    st.markdown(
+        """
+        <div class="section-card">
+            <h3>Start by entering your pricing inputs</h3>
+            <p class="muted">
+                Choose a pipe size, quantity, region and Atlan price from the sidebar.
+                The tool will generate a competitor pricing sheet and recommended bid strategy.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
