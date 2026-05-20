@@ -5,7 +5,6 @@ import pandas as pd
 from dataclasses import dataclass
 from typing import Dict, List
 
-
 # =========================================================
 # Data Models
 # =========================================================
@@ -25,9 +24,6 @@ class Competitor:
     name: str
     pricing_position: str
     price_factor: float
-    service_score: int
-    delivery_score: int
-    technical_score: int
 
 
 # =========================================================
@@ -37,6 +33,9 @@ class Competitor:
 ATLAN_BLUE = "#0B5CFF"
 ATLAN_DARK = "#071B3A"
 ATLAN_LIGHT = "#EEF5FF"
+ATLAN_RED_LIGHT = "#FFF1F1"
+ATLAN_AMBER_LIGHT = "#FFF8E6"
+ATLAN_GREEN_LIGHT = "#EEFBEF"
 
 REGIONS: Dict[str, RegionProfile] = {
     "QLD": RegionProfile("QLD", "Queensland", 1.05, 0.95, "High", "Competitive pipe market with strong pricing pressure."),
@@ -47,14 +46,14 @@ REGIONS: Dict[str, RegionProfile] = {
 }
 
 COMPETITORS: List[Competitor] = [
-    Competitor("Competitor A", "Aggressive / low-cost", 0.88, 6, 7, 5),
-    Competitor("Competitor B", "Market average", 1.00, 7, 7, 7),
-    Competitor("Competitor C", "Premium supplier", 1.16, 8, 8, 9),
-    Competitor("Competitor D", "Regional player", 0.96, 7, 9, 6),
-    Competitor("Competitor E", "Import / price-led", 0.82, 5, 5, 4),
+    Competitor("Competitor A", "Aggressive / low-cost", 0.88),
+    Competitor("Competitor B", "Market average", 1.00),
+    Competitor("Competitor C", "Premium supplier", 1.16),
+    Competitor("Competitor D", "Regional player", 0.96),
+    Competitor("Competitor E", "Import / price-led", 0.82),
 ]
 
-PIPE_BASE_PRICE_PER_M: Dict[int, float] = {
+PIPE_BASE_RRP_PER_M: Dict[int, float] = {
     225: 85,
     300: 120,
     375: 165,
@@ -67,255 +66,140 @@ PIPE_BASE_PRICE_PER_M: Dict[int, float] = {
     1200: 1250,
 }
 
+PIPE_DEFAULT_COST_PER_M: Dict[int, float] = {
+    size: round(rrp * 0.65, 2) for size, rrp in PIPE_BASE_RRP_PER_M.items()
+}
+
+PIPE_SIZE_OPTIONS = sorted(PIPE_BASE_RRP_PER_M.keys())
 
 # =========================================================
-# Logic
+# Helpers
 # =========================================================
 
-def quantity_discount(quantity_m: float) -> float:
-    if quantity_m >= 1000:
-        return 0.88
-    if quantity_m >= 500:
-        return 0.92
-    if quantity_m >= 250:
-        return 0.95
-    if quantity_m >= 100:
-        return 0.98
-    return 1.00
+def money(value: float) -> str:
+    return f"${value:,.0f}"
 
 
-def job_size_category(total_quantity_m: float) -> str:
-    if total_quantity_m >= 1000:
-        return "Major project"
-    if total_quantity_m >= 500:
-        return "Large project"
-    if total_quantity_m >= 250:
-        return "Medium project"
-    if total_quantity_m >= 100:
-        return "Small project"
-    return "Spot order"
+def money_2(value: float) -> str:
+    return f"${value:,.2f}"
 
 
-def score_band(score: float) -> str:
-    if score >= 8:
-        return "Strong"
-    if score >= 6:
-        return "Moderate"
-    return "Weak"
+def pct(value: float) -> str:
+    return f"{value:.1%}"
 
 
-def safe_pct(numerator: float, denominator: float) -> float:
-    if denominator == 0:
-        return 0.0
-    return numerator / denominator
+def safe_divide(numerator: float, denominator: float) -> float:
+    return numerator / denominator if denominator else 0.0
 
 
-def win_probability(atlan_package_price: float, market_avg_package: float, atlan_score: float, competitor_avg_score: float) -> str:
-    if market_avg_package <= 0:
-        return "N/A"
-
-    price_gap = (atlan_package_price - market_avg_package) / market_avg_package
-    score_advantage = (atlan_score - competitor_avg_score) / 10
-    adjusted_gap = price_gap - score_advantage
-
-    if adjusted_gap <= -0.05:
-        return "High"
-    if adjusted_gap <= 0.04:
-        return "Medium"
-    if adjusted_gap <= 0.12:
-        return "Low"
-    return "Very Low"
+def margin_band(contribution_margin: float) -> tuple[str, str]:
+    if contribution_margin < 0.25:
+        return "High risk", ATLAN_RED_LIGHT
+    if contribution_margin < 0.35:
+        return "Watch margin", ATLAN_AMBER_LIGHT
+    return "Healthy", ATLAN_GREEN_LIGHT
 
 
-def strategy_recommendation(
-    atlan_package_price: float,
-    market_avg_package: float,
-    contribution_margin_pct: float,
-) -> str:
-    gap = safe_pct(atlan_package_price - market_avg_package, market_avg_package)
-
-    if contribution_margin_pct < 0.25:
-        return "Contribution margin is thin. Avoid further discounting unless this is a strategic project."
-    if gap > 0.12:
-        return "Atlan is materially above market. Sharpen price or clearly justify the premium."
-    if gap > 0.04:
-        return "Atlan is slightly above market. Lead with service, availability, and engineering support."
-    if gap >= -0.03:
-        return "Atlan is market-aligned. Maintain pricing discipline and focus on conversion."
-    return "Atlan is pricing aggressively. Strong win potential, but check margin protection."
-
-
-def default_pipe_lines() -> pd.DataFrame:
-    return pd.DataFrame(
-        [
-            {
-                "Pipe size mm": 375,
-                "Quantity / length m": 120.0,
-                "RRP / m": PIPE_BASE_PRICE_PER_M[375],
-                "Cost / m": round(PIPE_BASE_PRICE_PER_M[375] * 0.65, 2),
-            },
-            {
-                "Pipe size mm": 450,
-                "Quantity / length m": 60.0,
-                "RRP / m": PIPE_BASE_PRICE_PER_M[450],
-                "Cost / m": round(PIPE_BASE_PRICE_PER_M[450] * 0.65, 2),
-            },
-        ]
-    )
+def build_default_product_rows() -> pd.DataFrame:
+    return pd.DataFrame([
+        {
+            "Pipe size mm": 375,
+            "Quantity m": 120.0,
+            "RRP / m": PIPE_BASE_RRP_PER_M[375],
+            "Discount %": 0.0,
+            "Cost / m": PIPE_DEFAULT_COST_PER_M[375],
+            "Freight cost": 0.0,
+        },
+        {
+            "Pipe size mm": 450,
+            "Quantity m": 80.0,
+            "RRP / m": PIPE_BASE_RRP_PER_M[450],
+            "Discount %": 0.0,
+            "Cost / m": PIPE_DEFAULT_COST_PER_M[450],
+            "Freight cost": 0.0,
+        },
+    ])
 
 
-def clean_pipe_lines(pipe_lines: pd.DataFrame) -> pd.DataFrame:
-    df = pipe_lines.copy()
+def calculate_product_lines(product_df: pd.DataFrame) -> pd.DataFrame:
+    df = product_df.copy()
 
-    required_cols = ["Pipe size mm", "Quantity / length m", "RRP / m", "Cost / m"]
+    required_cols = ["Pipe size mm", "Quantity m", "RRP / m", "Discount %", "Cost / m", "Freight cost"]
     for col in required_cols:
         if col not in df.columns:
             df[col] = 0.0
 
-    df = df[required_cols]
     df["Pipe size mm"] = pd.to_numeric(df["Pipe size mm"], errors="coerce").fillna(0).astype(int)
-    df["Quantity / length m"] = pd.to_numeric(df["Quantity / length m"], errors="coerce").fillna(0.0)
-    df["RRP / m"] = pd.to_numeric(df["RRP / m"], errors="coerce").fillna(0.0)
-    df["Cost / m"] = pd.to_numeric(df["Cost / m"], errors="coerce").fillna(0.0)
+    df["Quantity m"] = pd.to_numeric(df["Quantity m"], errors="coerce").fillna(0.0).clip(lower=0)
+    df["RRP / m"] = pd.to_numeric(df["RRP / m"], errors="coerce").fillna(0.0).clip(lower=0)
+    df["Discount %"] = pd.to_numeric(df["Discount %"], errors="coerce").fillna(0.0).clip(lower=0, upper=100)
+    df["Cost / m"] = pd.to_numeric(df["Cost / m"], errors="coerce").fillna(0.0).clip(lower=0)
+    df["Freight cost"] = pd.to_numeric(df["Freight cost"], errors="coerce").fillna(0.0).clip(lower=0)
 
-    df = df[
-        (df["Pipe size mm"] > 0)
-        & (df["Quantity / length m"] > 0)
-        & (df["RRP / m"] > 0)
-        & (df["Cost / m"] >= 0)
-    ].copy()
+    df["Net sell price / m"] = df["RRP / m"] * (1 - df["Discount %"] / 100)
+    df["Revenue before freight"] = df["Net sell price / m"] * df["Quantity m"]
+    df["RRP revenue"] = df["RRP / m"] * df["Quantity m"]
+    df["Product cost"] = df["Cost / m"] * df["Quantity m"]
+    df["Total cost incl. freight"] = df["Product cost"] + df["Freight cost"]
+    df["Contribution $"] = df["Revenue before freight"] - df["Total cost incl. freight"]
+    df["Contribution margin %"] = df.apply(
+        lambda row: safe_divide(row["Contribution $"], row["Revenue before freight"]), axis=1
+    )
+
+    df["RRP contribution $"] = df["RRP revenue"] - df["Total cost incl. freight"]
+    df["RRP contribution margin %"] = df.apply(
+        lambda row: safe_divide(row["RRP contribution $"], row["RRP revenue"]), axis=1
+    )
+    df["Margin lost $"] = df["RRP contribution $"] - df["Contribution $"]
+    df["Margin lost percentage points"] = (
+        df["RRP contribution margin %"] - df["Contribution margin %"]
+    ) * 100
 
     return df
 
 
-def build_atlan_package(
-    pipe_lines: pd.DataFrame,
-    discount_pct: float,
-    freight_cost: float,
-) -> tuple[pd.DataFrame, dict]:
-    df = clean_pipe_lines(pipe_lines)
-
-    discount_factor = 1 - (discount_pct / 100)
-
-    df["Gross RRP"] = df["RRP / m"] * df["Quantity / length m"]
-    df["Discounted price / m"] = df["RRP / m"] * discount_factor
-    df["Net revenue"] = df["Discounted price / m"] * df["Quantity / length m"]
-    df["Total cost"] = df["Cost / m"] * df["Quantity / length m"]
-    df["Contribution margin $"] = df["Net revenue"] - df["Total cost"]
-    df["Contribution margin %"] = df.apply(
-        lambda x: safe_pct(x["Contribution margin $"], x["Net revenue"]),
-        axis=1,
-    )
-
-    gross_rrp = df["Gross RRP"].sum()
-    net_revenue = df["Net revenue"].sum()
-    total_cost = df["Total cost"].sum()
-    cm_dollars = net_revenue - total_cost
-    cm_pct = safe_pct(cm_dollars, net_revenue)
-
-    undiscounted_cm_dollars = gross_rrp - total_cost
-    undiscounted_cm_pct = safe_pct(undiscounted_cm_dollars, gross_rrp)
-
-    cm_loss_dollars = undiscounted_cm_dollars - cm_dollars
-    cm_loss_pct = safe_pct(cm_loss_dollars, undiscounted_cm_dollars)
-
-    total_package_price = net_revenue + freight_cost
-
-    summary = {
-        "gross_rrp": gross_rrp,
-        "net_revenue": net_revenue,
-        "total_cost": total_cost,
-        "freight_cost": freight_cost,
-        "total_package_price": total_package_price,
-        "cm_dollars": cm_dollars,
-        "cm_pct": cm_pct,
-        "undiscounted_cm_dollars": undiscounted_cm_dollars,
-        "undiscounted_cm_pct": undiscounted_cm_pct,
-        "cm_loss_dollars": cm_loss_dollars,
-        "cm_loss_pct": cm_loss_pct,
-        "total_quantity_m": df["Quantity / length m"].sum(),
-    }
-
-    return df, summary
-
-
-def build_competitor_package_sheet(
-    pipe_lines: pd.DataFrame,
-    region_key: str,
-    freight_cost: float,
-) -> pd.DataFrame:
+def build_peer_comparison(product_lines: pd.DataFrame, region_key: str) -> pd.DataFrame:
     region = REGIONS[region_key]
-    lines = clean_pipe_lines(pipe_lines)
+    total_quantity = product_lines["Quantity m"].sum()
+    total_freight = product_lines["Freight cost"].sum()
 
     rows = []
-
-    for c in COMPETITORS:
-        product_total = 0.0
-
-        for _, line in lines.iterrows():
-            pipe_size = int(line["Pipe size mm"])
-            quantity_m = float(line["Quantity / length m"])
-            base_price = PIPE_BASE_PRICE_PER_M.get(pipe_size, float(line["RRP / m"]))
-
-            price_per_m = (
-                base_price
-                * c.price_factor
+    for competitor in COMPETITORS:
+        peer_revenue = 0.0
+        for _, line in product_lines.iterrows():
+            base_rrp = line["RRP / m"]
+            quantity = line["Quantity m"]
+            peer_price_per_m = (
+                base_rrp
+                * competitor.price_factor
+                * region.freight_multiplier
                 * region.market_pressure
-                * quantity_discount(quantity_m)
             )
+            peer_revenue += peer_price_per_m * quantity
 
-            product_total += price_per_m * quantity_m
-
-        competitor_freight = freight_cost * region.freight_multiplier
-        package_total = product_total + competitor_freight
-        total_score = (c.service_score + c.delivery_score + c.technical_score) / 3
-
+        peer_total_package = peer_revenue + total_freight
         rows.append({
-            "Competitor": c.name,
-            "Positioning": c.pricing_position,
-            "Product total": round(product_total, 0),
-            "Freight": round(competitor_freight, 0),
-            "Total package": round(package_total, 0),
-            "Service": c.service_score,
-            "Delivery": c.delivery_score,
-            "Technical": c.technical_score,
-            "Capability score": round(total_score, 1),
-            "Capability band": score_band(total_score),
+            "Peer": competitor.name,
+            "Positioning": competitor.pricing_position,
+            "Estimated product revenue": peer_revenue,
+            "Freight assumed": total_freight,
+            "Estimated total package": peer_total_package,
+            "Average package price / m": safe_divide(peer_total_package, total_quantity),
         })
 
     return pd.DataFrame(rows)
 
 
-def build_pipe_level_peer_comparison(
-    pipe_lines: pd.DataFrame,
-    region_key: str,
-) -> pd.DataFrame:
-    region = REGIONS[region_key]
-    lines = clean_pipe_lines(pipe_lines)
-    rows = []
-
-    for _, line in lines.iterrows():
-        pipe_size = int(line["Pipe size mm"])
-        quantity_m = float(line["Quantity / length m"])
-        base_price = PIPE_BASE_PRICE_PER_M.get(pipe_size, float(line["RRP / m"]))
-
-        peer_prices = [
-            base_price
-            * c.price_factor
-            * region.market_pressure
-            * quantity_discount(quantity_m)
-            for c in COMPETITORS
-        ]
-
-        rows.append({
-            "Pipe size": f"{pipe_size}mm",
-            "Quantity / length m": round(quantity_m, 0),
-            "Peer low / m": round(min(peer_prices), 2),
-            "Peer average / m": round(sum(peer_prices) / len(peer_prices), 2),
-            "Peer high / m": round(max(peer_prices), 2),
-        })
-
-    return pd.DataFrame(rows)
+def commercial_recommendation(package_margin: float, package_gap_vs_market: float, avg_discount_pct: float) -> str:
+    if package_margin < 0.25:
+        return "Margin risk is high. Review the discount, cost base, or freight recovery before submitting."
+    if avg_discount_pct >= 20:
+        return "Discounting is material. Make sure the volume or strategic value justifies the margin give-up."
+    if package_gap_vs_market > 0.12:
+        return "Package is materially above the peer average. Lead with availability, service level, and product quality."
+    if package_gap_vs_market < -0.05:
+        return "Package is priced aggressively versus peers. Good conversion potential, but check margin discipline."
+    return "Package is broadly market-aligned. Maintain price discipline and focus on conversion."
 
 
 # =========================================================
@@ -323,7 +207,7 @@ def build_pipe_level_peer_comparison(
 # =========================================================
 
 st.set_page_config(
-    page_title="Atlan Competitor Pricing Tool",
+    page_title="Atlan Package Pricing Tool",
     page_icon="💧",
     layout="wide",
 )
@@ -334,13 +218,11 @@ st.markdown(
         .stApp {{
             background: linear-gradient(180deg, #F5F9FF 0%, #FFFFFF 45%);
         }}
-
         .block-container {{
             padding-top: 1.8rem;
             padding-bottom: 3rem;
-            max-width: 1250px;
+            max-width: 1320px;
         }}
-
         .hero {{
             background: linear-gradient(135deg, {ATLAN_BLUE} 0%, #003A9B 100%);
             padding: 32px 36px;
@@ -349,19 +231,16 @@ st.markdown(
             box-shadow: 0 18px 40px rgba(11, 92, 255, 0.22);
             margin-bottom: 24px;
         }}
-
         .hero h1 {{
             font-size: 38px;
             margin-bottom: 8px;
             font-weight: 800;
         }}
-
         .hero p {{
             font-size: 17px;
             opacity: 0.92;
-            max-width: 900px;
+            max-width: 920px;
         }}
-
         .section-card {{
             background: white;
             border: 1px solid rgba(11, 92, 255, 0.12);
@@ -370,26 +249,21 @@ st.markdown(
             box-shadow: 0 10px 28px rgba(7, 27, 58, 0.06);
             margin-bottom: 18px;
         }}
-
         .small-card {{
             background: {ATLAN_LIGHT};
             border: 1px solid rgba(11, 92, 255, 0.14);
             border-radius: 16px;
             padding: 16px;
         }}
-
-        .danger-card {{
-            background: #FFF3F0;
-            border: 1px solid rgba(214, 69, 38, 0.18);
+        .warning-card {{
             border-radius: 16px;
             padding: 16px;
+            border: 1px solid rgba(7, 27, 58, 0.10);
         }}
-
         .muted {{
             color: rgba(7, 27, 58, 0.65);
             font-size: 14px;
         }}
-
         div.stButton > button[kind="primary"] {{
             background: {ATLAN_BLUE};
             border: 1px solid {ATLAN_BLUE};
@@ -398,35 +272,22 @@ st.markdown(
             font-weight: 700;
             width: 100%;
         }}
-
         div.stButton > button[kind="primary"]:hover {{
             background: #0848C8;
             border: 1px solid #0848C8;
         }}
-
         [data-testid="stMetricValue"] {{
             color: {ATLAN_DARK};
             font-weight: 800;
         }}
-
-        [data-testid="stMetricLabel"] {{
-            color: rgba(7, 27, 58, 0.72);
-        }}
-
         section[data-testid="stSidebar"] {{
             background: #FFFFFF;
             border-right: 1px solid rgba(11, 92, 255, 0.10);
-        }}
-
-        .stDataFrame {{
-            border-radius: 16px;
-            overflow: hidden;
         }}
     </style>
     """,
     unsafe_allow_html=True,
 )
-
 
 # =========================================================
 # Header
@@ -435,16 +296,15 @@ st.markdown(
 st.markdown(
     """
     <div class="hero">
-        <h1>Atlan Stormwater Competitor Pricing Tool</h1>
+        <h1>Atlan Stormwater Package Pricing Tool</h1>
         <p>
-            Build a multi-pipe package quote, add freight, compare the total landed price against peers,
-            and test how RRP discounts impact contribution margin.
+            Build a multi-product pipe package, apply line-level RRP discounts and freight,
+            then compare the total landed package against peers and quantify contribution margin impact.
         </p>
     </div>
     """,
     unsafe_allow_html=True,
 )
-
 
 # =========================================================
 # Sidebar Inputs
@@ -459,330 +319,276 @@ with st.sidebar:
         format_func=lambda x: REGIONS[x].name,
     )
 
-    freight_cost = st.number_input(
-        "Freight cost for total package",
-        min_value=0.0,
-        value=2500.0,
-        step=250.0,
-        help="Enter the freight cost to be added to the total Atlan package price.",
-    )
+    st.markdown("### Margin Thresholds")
+    target_margin = st.slider("Target contribution margin", 0, 70, 35, 1) / 100
+    risk_margin = st.slider("High-risk margin threshold", 0, 50, 25, 1) / 100
 
     st.divider()
 
-    st.markdown("## Discount Inputs")
-
-    discount_pct = st.slider(
-        "Discount off RRP",
-        min_value=0.0,
-        max_value=50.0,
-        value=0.0,
-        step=0.5,
-        help="Discount applied to all RRP lines.",
-    )
-
-    st.divider()
-
-    st.markdown("## Atlan Capability Scores")
-
-    atlan_service_score = st.slider("Service", 1, 10, 8)
-    atlan_delivery_score = st.slider("Delivery", 1, 10, 8)
-    atlan_technical_score = st.slider("Technical", 1, 10, 8)
-
-    st.divider()
-
-    generate = st.button(
-        "Generate Package Pricing",
-        type="primary",
-        use_container_width=True,
-    )
-
+    st.markdown("## Product Setup")
+    st.caption("Add each product line below. Freight and discount are entered per product line.")
 
 # =========================================================
-# Main App Inputs
+# Main Inputs
 # =========================================================
+
+region = REGIONS[region_key]
 
 st.markdown('<div class="section-card">', unsafe_allow_html=True)
-st.subheader("Pipe Package Inputs")
+st.subheader("Product Pricing Inputs")
+st.caption("Edit the rows directly. Add more rows for additional pipe dimensions or product lines.")
 
-st.write(
-    "Add each pipe dimension and quantity/length. Enter RRP per metre and estimated cost per metre for each line."
-)
-
-pipe_lines_input = st.data_editor(
-    default_pipe_lines(),
+product_input = st.data_editor(
+    build_default_product_rows(),
     num_rows="dynamic",
     use_container_width=True,
     hide_index=True,
     column_config={
         "Pipe size mm": st.column_config.SelectboxColumn(
             "Pipe size mm",
-            options=sorted(PIPE_BASE_PRICE_PER_M.keys()),
+            options=PIPE_SIZE_OPTIONS,
             required=True,
+            help="Select the pipe dimension for this product line.",
         ),
-        "Quantity / length m": st.column_config.NumberColumn(
-            "Quantity / length m",
+        "Quantity m": st.column_config.NumberColumn(
+            "Quantity m",
             min_value=0.0,
-            step=10.0,
-            required=True,
+            step=1.0,
+            format="%.2f",
         ),
         "RRP / m": st.column_config.NumberColumn(
             "RRP / m",
             min_value=0.0,
             step=5.0,
             format="$%.2f",
-            required=True,
+        ),
+        "Discount %": st.column_config.NumberColumn(
+            "Discount %",
+            min_value=0.0,
+            max_value=100.0,
+            step=1.0,
+            format="%.1f%%",
         ),
         "Cost / m": st.column_config.NumberColumn(
             "Cost / m",
             min_value=0.0,
             step=5.0,
             format="$%.2f",
-            required=True,
+        ),
+        "Freight cost": st.column_config.NumberColumn(
+            "Freight cost",
+            min_value=0.0,
+            step=50.0,
+            format="$%.2f",
+            help="Freight cost allocated to this specific product line.",
         ),
     },
 )
 
-st.markdown("</div>", unsafe_allow_html=True)
-
+calculate = st.button("Calculate Package Pricing", type="primary", use_container_width=True)
+st.markdown('</div>', unsafe_allow_html=True)
 
 # =========================================================
 # Main App
 # =========================================================
 
-if generate:
-    region = REGIONS[region_key]
+if calculate:
+    product_lines = calculate_product_lines(product_input)
+    product_lines = product_lines[product_lines["Quantity m"] > 0].copy()
 
-    atlan_lines, atlan_summary = build_atlan_package(
-        pipe_lines=pipe_lines_input,
-        discount_pct=discount_pct,
-        freight_cost=freight_cost,
-    )
-
-    if atlan_lines.empty:
-        st.error("Please enter at least one valid pipe line with pipe size, quantity, RRP and cost.")
+    if product_lines.empty:
+        st.error("Please enter at least one product line with a quantity greater than zero.")
         st.stop()
 
-    competitor_df = build_competitor_package_sheet(
-        pipe_lines=atlan_lines,
-        region_key=region_key,
-        freight_cost=freight_cost,
-    )
+    total_quantity = product_lines["Quantity m"].sum()
+    total_rrp_revenue = product_lines["RRP revenue"].sum()
+    total_revenue = product_lines["Revenue before freight"].sum()
+    total_product_cost = product_lines["Product cost"].sum()
+    total_freight = product_lines["Freight cost"].sum()
+    total_cost_incl_freight = product_lines["Total cost incl. freight"].sum()
+    total_contribution = product_lines["Contribution $"].sum()
+    package_margin = safe_divide(total_contribution, total_revenue)
 
-    pipe_peer_df = build_pipe_level_peer_comparison(
-        pipe_lines=atlan_lines,
-        region_key=region_key,
-    )
+    rrp_contribution = product_lines["RRP contribution $"].sum()
+    rrp_margin = safe_divide(rrp_contribution, total_rrp_revenue)
+    margin_lost_dollars = rrp_contribution - total_contribution
+    margin_lost_pp = (rrp_margin - package_margin) * 100
+    weighted_discount_pct = safe_divide(total_rrp_revenue - total_revenue, total_rrp_revenue)
 
-    market_low_package = competitor_df["Total package"].min()
-    market_avg_package = competitor_df["Total package"].mean()
-    market_high_package = competitor_df["Total package"].max()
-    market_median_package = competitor_df["Total package"].median()
+    peer_df = build_peer_comparison(product_lines, region_key)
+    peer_low = peer_df["Estimated total package"].min()
+    peer_avg = peer_df["Estimated total package"].mean()
+    peer_high = peer_df["Estimated total package"].max()
 
-    atlan_package_price = atlan_summary["total_package_price"]
-    atlan_gap_dollars = atlan_package_price - market_avg_package
-    atlan_gap_pct = safe_pct(atlan_gap_dollars, market_avg_package)
-
-    competitor_avg_score = competitor_df["Capability score"].mean()
-    atlan_score = (atlan_service_score + atlan_delivery_score + atlan_technical_score) / 3
-
-    win_prob = win_probability(
-        atlan_package_price,
-        market_avg_package,
-        atlan_score,
-        competitor_avg_score,
-    )
+    atlan_total_package = total_revenue
+    package_gap_vs_market = safe_divide(atlan_total_package - peer_avg, peer_avg)
+    margin_status, margin_colour = margin_band(package_margin)
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.subheader("Package Market Snapshot")
+    st.subheader("Package Summary")
 
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Peer low package", f"${market_low_package:,.0f}")
-    k2.metric("Peer average package", f"${market_avg_package:,.0f}")
-    k3.metric("Peer high package", f"${market_high_package:,.0f}")
-    k4.metric("Job size", job_size_category(atlan_summary["total_quantity_m"]))
+    k1.metric("Total package revenue", money(total_revenue))
+    k2.metric("Total freight", money(total_freight))
+    k3.metric("Contribution $", money(total_contribution))
+    k4.metric("Contribution margin", pct(package_margin))
 
     k5, k6, k7, k8 = st.columns(4)
-    k5.metric("Atlan gap vs peer average", f"{atlan_gap_pct:.1%}", f"${atlan_gap_dollars:,.0f}")
-    k6.metric("Contribution margin", f"{atlan_summary['cm_pct']:.1%}", f"${atlan_summary['cm_dollars']:,.0f}")
-    k7.metric("Win probability", win_prob)
-    k8.metric("Region competitiveness", region.competitiveness)
+    k5.metric("Weighted discount", pct(weighted_discount_pct))
+    k6.metric("Margin lost", money(margin_lost_dollars))
+    k7.metric("Margin lost", f"{margin_lost_pp:.1f} pts")
+    k8.metric("Vs peer average", pct(package_gap_vs_market))
 
     st.markdown(
         f"""
-        <div class="small-card">
-            <b>{region.name} market note:</b><br>
-            <span class="muted">{region.notes}</span>
+        <div class="warning-card" style="background:{margin_colour};">
+            <b>Margin status: {margin_status}</b><br>
+            <span class="muted">
+                At RRP, the package contribution margin would be {rrp_margin:.1%}. After discounting,
+                it is {package_margin:.1%}. The discount has reduced contribution margin by
+                {margin_lost_pp:.1f} percentage points, or {money(margin_lost_dollars)} of contribution.
+            </span>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.subheader("Atlan Package Build-up")
+    st.subheader("Product Line Output")
 
-    display_atlan_lines = atlan_lines.copy()
-    display_atlan_lines["Contribution margin %"] = display_atlan_lines["Contribution margin %"].map(lambda x: f"{x:.1%}")
+    display_lines = product_lines[[
+        "Pipe size mm",
+        "Quantity m",
+        "RRP / m",
+        "Discount %",
+        "Net sell price / m",
+        "Cost / m",
+        "Freight cost",
+        "Revenue before freight",
+        "Product cost",
+        "Total cost incl. freight",
+        "Contribution $",
+        "Contribution margin %",
+        "Margin lost $",
+        "Margin lost percentage points",
+    ]].copy()
 
     st.dataframe(
-        display_atlan_lines,
+        display_lines.style.format({
+            "Quantity m": "{:,.2f}",
+            "RRP / m": "${:,.2f}",
+            "Discount %": "{:,.1f}%",
+            "Net sell price / m": "${:,.2f}",
+            "Cost / m": "${:,.2f}",
+            "Freight cost": "${:,.0f}",
+            "Revenue before freight": "${:,.0f}",
+            "Product cost": "${:,.0f}",
+            "Total cost incl. freight": "${:,.0f}",
+            "Contribution $": "${:,.0f}",
+            "Contribution margin %": "{:.1%}",
+            "Margin lost $": "${:,.0f}",
+            "Margin lost percentage points": "{:,.1f} pts",
+        }),
         use_container_width=True,
         hide_index=True,
     )
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    a1, a2, a3, a4 = st.columns(4)
-    a1.metric("Gross RRP", f"${atlan_summary['gross_rrp']:,.0f}")
-    a2.metric("Discounted revenue", f"${atlan_summary['net_revenue']:,.0f}")
-    a3.metric("Freight added", f"${atlan_summary['freight_cost']:,.0f}")
-    a4.metric("Total package", f"${atlan_summary['total_package_price']:,.0f}")
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.subheader("Discount Impact on Contribution Margin")
-
-    d1, d2, d3, d4 = st.columns(4)
-    d1.metric("Discount applied", f"{discount_pct:.1f}%")
-    d2.metric("CM before discount", f"{atlan_summary['undiscounted_cm_pct']:.1%}", f"${atlan_summary['undiscounted_cm_dollars']:,.0f}")
-    d3.metric("CM after discount", f"{atlan_summary['cm_pct']:.1%}", f"${atlan_summary['cm_dollars']:,.0f}")
-    d4.metric("Contribution margin lost", f"{atlan_summary['cm_loss_pct']:.1%}", f"${atlan_summary['cm_loss_dollars']:,.0f}")
-
-    if discount_pct > 0:
-        st.markdown(
-            f"""
-            <div class="danger-card">
-                <b>Discount warning:</b><br>
-                A <b>{discount_pct:.1f}%</b> discount off RRP reduces contribution margin dollars by
-                <b>{atlan_summary['cm_loss_pct']:.1%}</b>, or approximately
-                <b>${atlan_summary['cm_loss_dollars']:,.0f}</b>.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    else:
-        st.info("No discount has been applied. Contribution margin is shown at full RRP.")
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.subheader("Peer Package Comparison")
-
-    competitor_df["Gap vs Atlan"] = competitor_df["Total package"] - round(atlan_package_price, 0)
-    competitor_df["Gap vs Atlan %"] = competitor_df["Gap vs Atlan"].apply(
-        lambda x: safe_pct(x, atlan_package_price)
-    ).map(lambda x: f"{x:.1%}")
-
-    st.dataframe(
-        competitor_df,
-        use_container_width=True,
-        hide_index=True,
-    )
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    col_left, col_right = st.columns([1.05, 0.95])
+    col_left, col_right = st.columns([1.15, 0.85])
 
     with col_left:
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.subheader("Pipe-level Peer Range")
+        st.subheader("Peer Package Comparison")
+
+        peer_display = peer_df.copy()
+        peer_display.loc[len(peer_display)] = {
+            "Peer": "Atlan proposed package",
+            "Positioning": "Current quote",
+            "Estimated product revenue": total_revenue,
+            "Freight assumed": total_freight,
+            "Estimated total package": atlan_total_package,
+            "Average package price / m": safe_divide(atlan_total_package, total_quantity),
+        }
+        peer_display = peer_display.sort_values("Estimated total package").reset_index(drop=True)
 
         st.dataframe(
-            pipe_peer_df,
+            peer_display.style.format({
+                "Estimated product revenue": "${:,.0f}",
+                "Freight assumed": "${:,.0f}",
+                "Estimated total package": "${:,.0f}",
+                "Average package price / m": "${:,.2f}",
+            }),
             use_container_width=True,
             hide_index=True,
         )
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
     with col_right:
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.subheader("Recommended Bid Strategy")
+        st.subheader("Commercial Readout")
 
-        recommendation = strategy_recommendation(
-            atlan_package_price,
-            market_avg_package,
-            atlan_summary["cm_pct"],
+        recommendation = commercial_recommendation(
+            package_margin=package_margin,
+            package_gap_vs_market=package_gap_vs_market,
+            avg_discount_pct=weighted_discount_pct * 100,
         )
 
-        st.success(recommendation)
+        if package_margin < risk_margin:
+            st.error(recommendation)
+        elif package_margin < target_margin:
+            st.warning(recommendation)
+        else:
+            st.success(recommendation)
 
-        st.markdown("#### Readout")
         st.write(
-            f"Atlan's total package is priced at **{atlan_gap_pct:.1%}** versus the estimated peer average."
+            f"The proposed package is **{pct(package_gap_vs_market)}** versus the estimated peer average."
         )
         st.write(
-            f"The estimated win probability is **{win_prob}**, with a contribution margin of **{atlan_summary['cm_pct']:.1%}**."
+            f"The weighted discount off RRP is **{pct(weighted_discount_pct)}**."
         )
         st.write(
-            f"The package includes **{len(atlan_lines)} pipe line(s)** and **${freight_cost:,.0f}** of freight."
+            f"Contribution margin has moved from **{pct(rrp_margin)}** at RRP to **{pct(package_margin)}** after discounting and freight."
         )
 
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("#### Market Range")
+        st.write(f"Peer low: **{money(peer_low)}**")
+        st.write(f"Peer average: **{money(peer_avg)}**")
+        st.write(f"Peer high: **{money(peer_high)}**")
+
+        st.markdown("#### Region Note")
+        st.caption(region.notes)
+        st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.subheader("Suggested Pricing Scenarios")
+    st.subheader("Download Outputs")
 
-    total_cost = atlan_summary["total_cost"]
-    freight = atlan_summary["freight_cost"]
+    output_df = product_lines.copy()
+    output_df["Region"] = region.name
+    output_df["Package total revenue"] = total_revenue
+    output_df["Package contribution margin %"] = package_margin
+    output_df["Weighted discount %"] = weighted_discount_pct
+    output_df["Peer average package"] = peer_avg
+    output_df["Package gap vs peer average %"] = package_gap_vs_market
 
-    scenarios = pd.DataFrame([
-        {
-            "Scenario": "Aggressive",
-            "Product revenue": round(max(market_low_package - freight, 0) * 0.99, 0),
-            "Freight": round(freight, 0),
-            "Total package": round(max(market_low_package - freight, 0) * 0.99 + freight, 0),
-            "Contribution margin": f"{safe_pct((max(market_low_package - freight, 0) * 0.99) - total_cost, max(market_low_package - freight, 0) * 0.99):.1%}",
-            "Best for": "Strategic win / defend share",
-        },
-        {
-            "Scenario": "Market aligned",
-            "Product revenue": round(max(market_avg_package - freight, 0), 0),
-            "Freight": round(freight, 0),
-            "Total package": round(max(market_avg_package - freight, 0) + freight, 0),
-            "Contribution margin": f"{safe_pct(max(market_avg_package - freight, 0) - total_cost, max(market_avg_package - freight, 0)):.1%}",
-            "Best for": "Balanced win rate and margin",
-        },
-        {
-            "Scenario": "Premium",
-            "Product revenue": round(max(market_high_package - freight, 0) * 0.98, 0),
-            "Freight": round(freight, 0),
-            "Total package": round(max(market_high_package - freight, 0) * 0.98 + freight, 0),
-            "Contribution margin": f"{safe_pct((max(market_high_package - freight, 0) * 0.98) - total_cost, max(market_high_package - freight, 0) * 0.98):.1%}",
-            "Best for": "Less price-sensitive customer",
-        },
-    ])
-
-    st.dataframe(
-        scenarios,
-        use_container_width=True,
-        hide_index=True,
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    download_tabs = {
-        "atlan_package": atlan_lines,
-        "peer_comparison": competitor_df,
-        "pipe_peer_range": pipe_peer_df,
-        "scenarios": scenarios,
-    }
-
-    csv = competitor_df.to_csv(index=False)
-
+    csv = output_df.to_csv(index=False)
     st.download_button(
-        label="Download Peer Package Comparison",
+        label="Download Package Pricing Output",
         data=csv,
-        file_name="atlan_peer_package_pricing_comparison.csv",
+        file_name="atlan_package_pricing_output.csv",
         mime="text/csv",
         use_container_width=True,
     )
+    st.markdown('</div>', unsafe_allow_html=True)
 
 else:
     st.markdown(
         """
         <div class="section-card">
-            <h3>Start by entering your package inputs</h3>
+            <h3>Start by adding product lines</h3>
             <p class="muted">
-                Add multiple pipe dimensions and quantities, enter freight, apply any RRP discount,
-                then generate the package comparison against peers.
+                Add each pipe size as a separate line, enter the quantity, RRP, discount, cost and freight.
+                Then calculate the package to see contribution margin impact and peer positioning.
             </p>
         </div>
         """,
