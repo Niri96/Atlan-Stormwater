@@ -657,6 +657,80 @@ for delivery in list(st.session_state.deliveries):
 
     st.markdown("</div>", unsafe_allow_html=True)
 
+# =========================================================
+# DETAILED PEER SUMMARY
+# =========================================================
+
+st.markdown("### Atlan vs Peer Summary")
+st.markdown('<div class="card">', unsafe_allow_html=True)
+
+atlan_total = total_revenue
+peer_only_df = peer_df[peer_df["Supplier"] != "Atlan Proposed Package"].copy()
+
+peer_avg_total = peer_only_df["Total Package"].mean()
+peer_low_total = peer_only_df["Total Package"].min()
+peer_high_total = peer_only_df["Total Package"].max()
+
+gap_vs_peer_avg = safe_divide(atlan_total - peer_avg_total, peer_avg_total)
+gap_vs_peer_low = safe_divide(atlan_total - peer_low_total, peer_low_total)
+gap_vs_peer_high = safe_divide(atlan_total - peer_high_total, peer_high_total)
+
+rank_df = peer_df.sort_values("Total Package").reset_index(drop=True)
+atlan_rank = rank_df.index[rank_df["Supplier"] == "Atlan Proposed Package"][0] + 1
+total_suppliers = len(rank_df)
+
+c1, c2, c3, c4 = st.columns(4)
+
+c1.metric("Atlan Package", money(atlan_total))
+c2.metric("Peer Average", money(peer_avg_total), delta=f"{gap_vs_peer_avg:.1%}")
+c3.metric("Peer Low", money(peer_low_total), delta=f"{gap_vs_peer_low:.1%}")
+c4.metric("Peer High", money(peer_high_total), delta=f"{gap_vs_peer_high:.1%}")
+
+c5, c6, c7, c8 = st.columns(4)
+
+c5.metric("Market Rank", f"{atlan_rank} of {total_suppliers}")
+c6.metric("Atlan Avg $ / m", f"${safe_divide(atlan_total, total_quantity):,.2f}")
+c7.metric("Peer Avg $ / m", f"${safe_divide(peer_avg_total, total_quantity):,.2f}")
+c8.metric("Package Freight", money(total_freight))
+
+if gap_vs_peer_avg > 0.10:
+    st.warning(
+        f"Atlan is priced **{gap_vs_peer_avg:.1%} above** the peer average. "
+        "This may need a clear premium justification around availability, delivery reliability, product quality or service."
+    )
+elif gap_vs_peer_avg < -0.05:
+    st.success(
+        f"Atlan is priced **{abs(gap_vs_peer_avg):.1%} below** the peer average. "
+        "This is commercially competitive, but check that the contribution margin remains protected."
+    )
+else:
+    st.info(
+        f"Atlan is broadly market-aligned at **{gap_vs_peer_avg:.1%}** versus the peer average. "
+        "Pricing appears reasonable, subject to margin and freight recovery."
+    )
+
+peer_summary = peer_df.copy()
+peer_summary["Gap vs Atlan $"] = peer_summary["Total Package"] - atlan_total
+peer_summary["Gap vs Atlan %"] = peer_summary["Gap vs Atlan $"].apply(
+    lambda x: safe_divide(x, atlan_total)
+)
+
+st.dataframe(
+    peer_summary.style.format(
+        {
+            "Product Package": "${:,.0f}",
+            "Peer Freight": "${:,.0f}",
+            "Total Package": "${:,.0f}",
+            "Average $ / m": "${:,.2f}",
+            "Gap vs Atlan $": "${:,.0f}",
+            "Gap vs Atlan %": "{:.1%}",
+        }
+    ),
+    use_container_width=True,
+    hide_index=True,
+)
+
+st.markdown("</div>", unsafe_allow_html=True)
 
 detail_df = pd.DataFrame(all_rows)
 
