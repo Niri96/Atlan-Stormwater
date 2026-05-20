@@ -658,23 +658,6 @@ for delivery in list(st.session_state.deliveries):
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-st.dataframe(
-    peer_summary.style.format(
-        {
-            "Product Package": "${:,.0f}",
-            "Peer Freight": "${:,.0f}",
-            "Total Package": "${:,.0f}",
-            "Average $ / m": "${:,.2f}",
-            "Gap vs Atlan $": "${:,.0f}",
-            "Gap vs Atlan %": "{:.1%}",
-        }
-    ),
-    use_container_width=True,
-    hide_index=True,
-)
-
-st.markdown("</div>", unsafe_allow_html=True)
-
 detail_df = pd.DataFrame(all_rows)
 
 if detail_df.empty:
