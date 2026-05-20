@@ -110,64 +110,84 @@ ZONES = {
 st.markdown(
     """
 <style>
+
 .stApp {
     background: #F4F7FB;
 }
 
 .block-container {
-    max-width: 1420px;
-    padding-top: 1.5rem;
-    padding-bottom: 3rem;
+    max-width: 1450px;
+    padding-top: 0.8rem;
+    padding-bottom: 1rem;
 }
+
+/* =========================================
+HERO
+========================================= */
 
 .hero {
     background: linear-gradient(135deg, #071B3A 0%, #0B5CFF 100%);
-    padding: 36px 40px;
-    border-radius: 30px;
+    padding: 22px 26px;
+    border-radius: 22px;
     color: white;
-    box-shadow: 0 22px 55px rgba(7,27,58,0.24);
-    margin-bottom: 28px;
+    box-shadow: 0 14px 34px rgba(7,27,58,0.18);
+    margin-bottom: 16px;
 }
 
 .hero h1 {
-    font-size: 42px;
-    margin-bottom: 8px;
+    font-size: 28px;
+    margin-bottom: 4px;
     font-weight: 850;
+    line-height: 1.1;
 }
 
 .hero p {
-    font-size: 17px;
-    opacity: 0.92;
-    max-width: 960px;
+    font-size: 13px;
+    opacity: 0.90;
+    margin-bottom: 0;
+    line-height: 1.4;
 }
+
+/* =========================================
+CARDS
+========================================= */
 
 .card {
     background: white;
-    border: 1px solid rgba(7,27,58,0.08);
-    border-radius: 26px;
-    padding: 24px;
-    margin-bottom: 22px;
-    box-shadow: 0 10px 32px rgba(7,27,58,0.06);
+    border: 1px solid rgba(7,27,58,0.06);
+    border-radius: 18px;
+    padding: 16px;
+    margin-bottom: 14px;
+    box-shadow: 0 6px 18px rgba(7,27,58,0.04);
 }
 
 .small-card {
     background: white;
-    border: 1px solid rgba(7,27,58,0.08);
-    border-radius: 20px;
-    padding: 18px;
-    box-shadow: 0 8px 22px rgba(7,27,58,0.05);
+    border-radius: 16px;
+    padding: 14px;
+    border: 1px solid rgba(7,27,58,0.06);
 }
 
+/* =========================================
+TEXT
+========================================= */
+
 .title {
-    font-size: 21px;
-    font-weight: 850;
+    font-size: 17px;
+    font-weight: 800;
     color: #071B3A;
+    margin-bottom: 2px;
 }
 
 .subtle {
-    color: rgba(7,27,58,0.62);
-    font-size: 14px;
+    color: rgba(7,27,58,0.60);
+    font-size: 11px;
+    line-height: 1.3;
 }
+
+/* =========================================
+RISK
+========================================= */
 
 .good {
     background: #ECFDF3;
@@ -182,41 +202,106 @@ st.markdown(
 }
 
 .risk-box {
-    border-radius: 22px;
-    padding: 22px;
-    margin-top: 18px;
+    border-radius: 16px;
+    padding: 14px 16px;
+    margin-top: 12px;
     border: 1px solid rgba(7,27,58,0.08);
+    font-size: 12px;
 }
 
-[data-testid="stMetricValue"] {
-    color: #071B3A;
-    font-weight: 850;
+/* =========================================
+METRICS
+========================================= */
+
+[data-testid="stMetric"] {
+    background: white;
+    border-radius: 14px;
+    padding: 10px 12px;
+    border: 1px solid rgba(7,27,58,0.06);
+    box-shadow: 0 4px 12px rgba(7,27,58,0.03);
 }
 
 [data-testid="stMetricLabel"] {
-    color: rgba(7,27,58,0.68);
+    font-size: 11px;
+    color: rgba(7,27,58,0.62);
 }
 
-section[data-testid="stSidebar"] {
-    background: #FFFFFF;
-    border-right: 1px solid rgba(7,27,58,0.08);
+[data-testid="stMetricValue"] {
+    font-size: 22px;
+    font-weight: 850;
+    color: #071B3A;
 }
+
+[data-testid="stMetricDelta"] {
+    font-size: 11px;
+}
+
+/* =========================================
+INPUTS
+========================================= */
+
+.stSelectbox label,
+.stNumberInput label,
+.stRadio label {
+    font-size: 11px !important;
+    font-weight: 650 !important;
+}
+
+.stTextInput input,
+.stNumberInput input {
+    font-size: 12px !important;
+}
+
+.stSelectbox div[data-baseweb="select"] {
+    min-height: 34px;
+}
+
+/* =========================================
+BUTTONS
+========================================= */
 
 div.stButton > button {
-    border-radius: 14px;
-    font-weight: 750;
+    border-radius: 10px;
+    font-weight: 700;
+    font-size: 12px;
+    padding: 0.35rem 0.8rem;
 }
 
 div.stButton > button[kind="primary"] {
     background: #0B5CFF;
     border-color: #0B5CFF;
 }
+
+/* =========================================
+SIDEBAR
+========================================= */
+
+section[data-testid="stSidebar"] {
+    background: #FFFFFF;
+    border-right: 1px solid rgba(7,27,58,0.08);
+}
+
+/* =========================================
+DATAFRAMES
+========================================= */
+
+[data-testid="stDataFrame"] {
+    font-size: 11px;
+}
+
+/* =========================================
+EXPANDER
+========================================= */
+
+.streamlit-expanderHeader {
+    font-size: 13px !important;
+    font-weight: 700 !important;
+}
+
 </style>
 """,
     unsafe_allow_html=True,
 )
-
-
 # =========================================================
 # HELPERS
 # =========================================================
