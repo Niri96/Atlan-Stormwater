@@ -15,6 +15,7 @@ class Region:
     name: str
     market_factor: float
     freight_factor: float
+    target_margin: float
     notes: str
 
 
@@ -51,21 +52,12 @@ PIPE_COST = {size: round(rrp * 0.65, 2) for size, rrp in PIPE_RRP.items()}
 PRICE_ADJUSTMENT_OPTIONS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
 
 REGIONS: Dict[str, Region] = {
-    "VIC": Region("Victoria", 1.00, 1.00, "Balanced market with room for value-led pricing."),
-    "QLD": Region("Queensland", 0.95, 1.05, "Competitive market with stronger price pressure."),
-    "NSW": Region("New South Wales", 0.97, 1.10, "High-volume market with active peer competition."),
-    "WA": Region("Western Australia", 1.05, 1.18, "Higher freight exposure and supply cost."),
-    "SA": Region("South Australia", 1.02, 1.12, "Moderate pricing pressure with freight sensitivity."),
-    "TAS": Region("Tasmania", 1.06, 1.30, "Freight-sensitive market with delivery complexity."),
-}
-
-TARGET_MARGINS: Dict[str, float] = {
-    "QLD": 0.24,
-    "VIC": 0.30,
-    "NSW": 0.40,
-    "WA": 0.35,
-    "SA": 0.32,
-    "TAS": 0.35,
+    "QLD": Region("Queensland", 0.95, 1.05, 0.24, "Competitive market with stronger price pressure."),
+    "VIC": Region("Victoria", 1.00, 1.00, 0.30, "Balanced market with room for value-led pricing."),
+    "NSW": Region("New South Wales", 0.97, 1.10, 0.40, "High-volume market with active peer competition."),
+    "WA": Region("Western Australia", 1.05, 1.18, 0.35, "Higher freight exposure and supply cost."),
+    "SA": Region("South Australia", 1.02, 1.12, 0.32, "Moderate pricing pressure with freight sensitivity."),
+    "TAS": Region("Tasmania", 1.06, 1.30, 0.35, "Freight-sensitive market with delivery complexity."),
 }
 
 COMPETITORS: List[Competitor] = [
@@ -439,8 +431,8 @@ def build_peer_comparison(
             "Positioning": "Current quote",
             "Product Package": total_revenue,
             "Peer Freight": total_freight,
-            "Total Package": total_revenue,
-            "Average $ / m": safe_divide(total_revenue, total_quantity),
+            "Total Package": total_revenue + total_freight,
+            "Average $ / m": safe_divide(total_revenue + total_freight, total_quantity),
         }
     )
 
@@ -480,7 +472,12 @@ with st.sidebar:
         format_func=lambda x: REGIONS[x].name,
     )
 
-    st.caption(REGIONS[region_key].notes)
+    region = REGIONS[region_key]
+    target_margin = region.target_margin
+
+    st.caption(region.notes)
+
+    st.metric("State Target Margin", pct(target_margin))
 
     st.divider()
 
@@ -493,9 +490,6 @@ with st.sidebar:
     st.divider()
 
     st.markdown("### Guardrails")
-
-    target_margin = TARGET_MARGINS[region_key]
-    st.metric("State target margin", pct(target_margin))
 
     risk_margin = st.slider("High-risk margin %", 0, 50, 25, 1) / 100
 
@@ -537,6 +531,9 @@ for delivery in list(st.session_state.deliveries):
                 st.rerun()
 
     for idx, product in enumerate(list(delivery["products"])):
+        if "price_adjustment_pct" not in product:
+            product["price_adjustment_pct"] = product.pop("discount_pct", 0)
+
         p1, p2, p3, p4, p5, p6 = st.columns([0.17, 0.17, 0.15, 0.15, 0.18, 0.18])
 
         with p1:
@@ -697,7 +694,7 @@ st.markdown('<div class="card">', unsafe_allow_html=True)
 s1, s2, s3, s4, s5 = st.columns(5)
 s1.metric("Revenue", money(total_revenue), delta=f"{pct(weighted_price_adjustment)} price adjustment")
 s2.metric("Contribution", money(total_contribution))
-s3.metric("Margin", pct(package_margin))
+s3.metric("Margin", pct(package_margin), delta=f"Target {pct(target_margin)}")
 s4.metric("Margin at Risk", money(margin_lost), delta=f"{margin_lost_pp:.1f} pts")
 s5.metric("Freight", money(total_freight))
 
@@ -714,12 +711,12 @@ if package_margin < risk_margin:
     risk_message = "Below the high-risk threshold. Review price adjustment, freight recovery or cost."
 elif package_margin < target_margin:
     risk_class = "watch"
-    risk_title = "Margin below target"
-    risk_message = "Above the risk floor but below target. Check whether the price adjustment is justified."
+    risk_title = "Margin below state target"
+    risk_message = f"Above the risk floor but below the {region_key} target margin of {target_margin:.1%}. Check whether the price adjustment is justified."
 else:
     risk_class = "good"
     risk_title = "Healthy package margin"
-    risk_message = "Above the target contribution margin."
+    risk_message = f"Above the {region_key} target contribution margin of {target_margin:.1%}."
 
 st.markdown(
     f"""
@@ -780,7 +777,7 @@ st.dataframe(
 
 peer_only_df = peer_df[peer_df["Supplier"] != "Atlan Proposed Package"].copy()
 
-atlan_total = total_revenue
+atlan_total = total_revenue + total_freight
 peer_avg_total = peer_only_df["Total Package"].mean()
 peer_low_total = peer_only_df["Total Package"].min()
 peer_high_total = peer_only_df["Total Package"].max()
