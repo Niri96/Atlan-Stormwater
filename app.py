@@ -48,7 +48,7 @@ PIPE_RRP = {
 
 PIPE_COST = {size: round(rrp * 0.65, 2) for size, rrp in PIPE_RRP.items()}
 
-DISCOUNT_OPTIONS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
+PRICE_ADJUSTMENT_OPTIONS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
 
 REGIONS: Dict[str, Region] = {
     "VIC": Region("Victoria", 1.00, 1.00, "Balanced market with room for value-led pricing."),
@@ -57,6 +57,15 @@ REGIONS: Dict[str, Region] = {
     "WA": Region("Western Australia", 1.05, 1.18, "Higher freight exposure and supply cost."),
     "SA": Region("South Australia", 1.02, 1.12, "Moderate pricing pressure with freight sensitivity."),
     "TAS": Region("Tasmania", 1.06, 1.30, "Freight-sensitive market with delivery complexity."),
+}
+
+TARGET_MARGINS: Dict[str, float] = {
+    "QLD": 0.24,
+    "VIC": 0.30,
+    "NSW": 0.40,
+    "WA": 0.35,
+    "SA": 0.32,
+    "TAS": 0.35,
 }
 
 COMPETITORS: List[Competitor] = [
@@ -266,7 +275,7 @@ def add_delivery() -> None:
                 {
                     "pipe_size": 375,
                     "quantity_m": 100.0,
-                    "discount_pct": 0,
+                    "price_adjustment_pct": 0,
                 }
             ],
             "freight_method": "Auto calculate",
@@ -293,7 +302,7 @@ def add_product_to_delivery(delivery_id: int) -> None:
                 {
                     "pipe_size": 375,
                     "quantity_m": 100.0,
-                    "discount_pct": 0,
+                    "price_adjustment_pct": 0,
                 }
             )
             break
@@ -327,11 +336,11 @@ def calculate_delivery(delivery: dict, global_inputs: dict, region_key: str) -> 
     for product in delivery["products"]:
         pipe_size = product["pipe_size"]
         quantity_m = product["quantity_m"]
-        discount_pct = product["discount_pct"]
+        price_adjustment_pct = product["price_adjustment_pct"]
 
         rrp_per_m = PIPE_RRP[pipe_size]
         cost_per_m = PIPE_COST[pipe_size]
-        net_price_per_m = rrp_per_m * (1 - discount_pct / 100)
+        net_price_per_m = rrp_per_m * (1 - price_adjustment_pct / 100)
 
         rrp_revenue = rrp_per_m * quantity_m
         revenue = net_price_per_m * quantity_m
@@ -345,7 +354,7 @@ def calculate_delivery(delivery: dict, global_inputs: dict, region_key: str) -> 
                 "Pipe Size": f"{pipe_size}mm",
                 "Quantity m": quantity_m,
                 "RRP / m": rrp_per_m,
-                "Discount %": discount_pct,
+                "Price Adjustment %": price_adjustment_pct,
                 "Net Price / m": net_price_per_m,
                 "RRP Revenue": rrp_revenue,
                 "Revenue": revenue,
@@ -453,7 +462,7 @@ st.markdown(
 <div class="hero">
     <h1>Atlan Stormwater Pricing Engine</h1>
     <p>
-        Build a multi-delivery pipe package, apply controlled discounts, calculate freight by delivery,
+        Build a multi-delivery pipe package, apply controlled price adjustments, calculate freight by delivery,
         and compare Atlan’s total package against peers.
     </p>
 </div>
@@ -485,7 +494,9 @@ with st.sidebar:
 
     st.markdown("### Guardrails")
 
-    target_margin = st.slider("Target margin %", 0, 70, 35, 1) / 100
+    target_margin = TARGET_MARGINS[region_key]
+    st.metric("State target margin", pct(target_margin))
+
     risk_margin = st.slider("High-risk margin %", 0, 50, 25, 1) / 100
 
 
@@ -517,7 +528,7 @@ for delivery in list(st.session_state.deliveries):
 
     with h1:
         st.markdown(f'<div class="title">Delivery {delivery["id"]}</div>', unsafe_allow_html=True)
-        st.markdown('<div class="subtle">Add pipe sizes, quantity and discount.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="subtle">Add pipe sizes, quantity and price adjustment.</div>', unsafe_allow_html=True)
 
     with h2:
         if len(st.session_state.deliveries) > 1:
@@ -553,11 +564,11 @@ for delivery in list(st.session_state.deliveries):
             st.metric("Cost/m", f"${PIPE_COST[product['pipe_size']]:,.0f}")
 
         with p5:
-            product["discount_pct"] = st.selectbox(
-                "Discount",
-                DISCOUNT_OPTIONS,
-                index=DISCOUNT_OPTIONS.index(product["discount_pct"]),
-                key=f"discount_{delivery['id']}_{idx}",
+            product["price_adjustment_pct"] = st.selectbox(
+                "Price Adjustment",
+                PRICE_ADJUSTMENT_OPTIONS,
+                index=PRICE_ADJUSTMENT_OPTIONS.index(product["price_adjustment_pct"]),
+                key=f"price_adjustment_{delivery['id']}_{idx}",
                 format_func=lambda x: f"{x}%",
             )
 
@@ -675,7 +686,7 @@ total_contribution = detail_df["Contribution $"].sum()
 package_margin = safe_divide(total_contribution, total_revenue)
 rrp_contribution = detail_df["RRP Contribution $"].sum()
 rrp_margin = safe_divide(rrp_contribution, total_rrp_revenue)
-weighted_discount = safe_divide(total_rrp_revenue - total_revenue, total_rrp_revenue)
+weighted_price_adjustment = safe_divide(total_rrp_revenue - total_revenue, total_rrp_revenue)
 margin_lost = rrp_contribution - total_contribution
 margin_lost_pp = (rrp_margin - package_margin) * 100
 
@@ -684,7 +695,7 @@ st.markdown("### Executive Summary")
 st.markdown('<div class="card">', unsafe_allow_html=True)
 
 s1, s2, s3, s4, s5 = st.columns(5)
-s1.metric("Revenue", money(total_revenue), delta=f"{pct(weighted_discount)} discount")
+s1.metric("Revenue", money(total_revenue), delta=f"{pct(weighted_price_adjustment)} price adjustment")
 s2.metric("Contribution", money(total_contribution))
 s3.metric("Margin", pct(package_margin))
 s4.metric("Margin at Risk", money(margin_lost), delta=f"{margin_lost_pp:.1f} pts")
@@ -700,11 +711,11 @@ s10.metric("Lines", len(detail_df))
 if package_margin < risk_margin:
     risk_class = "bad"
     risk_title = "High margin risk"
-    risk_message = "Below the high-risk threshold. Review discounting, freight recovery or cost."
+    risk_message = "Below the high-risk threshold. Review price adjustment, freight recovery or cost."
 elif package_margin < target_margin:
     risk_class = "watch"
     risk_title = "Margin below target"
-    risk_message = "Above the risk floor but below target. Check whether the discount is justified."
+    risk_message = "Above the risk floor but below target. Check whether the price adjustment is justified."
 else:
     risk_class = "good"
     risk_title = "Healthy package margin"
@@ -716,7 +727,7 @@ st.markdown(
     <b>{risk_title}</b><br>
     {risk_message}
     At RRP, margin would be <b>{rrp_margin:.1%}</b>. 
-    After discount and freight, it is <b>{package_margin:.1%}</b>. 
+    After price adjustment and freight, it is <b>{package_margin:.1%}</b>. 
     Contribution at risk is <b>{money(margin_lost)}</b>.
 </div>
 """,
@@ -844,7 +855,7 @@ with st.expander("Detailed Product Output", expanded=False):
             {
                 "Quantity m": "{:,.0f}",
                 "RRP / m": "${:,.2f}",
-                "Discount %": "{:.0f}%",
+                "Price Adjustment %": "{:.0f}%",
                 "Net Price / m": "${:,.2f}",
                 "RRP Revenue": "${:,.0f}",
                 "Revenue": "${:,.0f}",
