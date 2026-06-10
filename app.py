@@ -47,9 +47,7 @@ PIPE_RRP = {
     1200: 1250,
 }
 
-PIPE_COST = {size: round(rrp * 0.65, 2) for size, rrp in PIPE_RRP.items()}
-
-PRICE_ADJUSTMENT_OPTIONS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
+DEFAULT_PIPE_COST = {size: round(rrp * 0.65, 2) for size, rrp in PIPE_RRP.items()}
 
 REGIONS: Dict[str, Region] = {
     "QLD": Region("Queensland", 0.95, 1.05, 0.24, "Competitive market with stronger price pressure."),
@@ -84,264 +82,6 @@ ZONES = {
     "Remote": 350,
     "TAS": 600,
 }
-
-
-def money(value: float) -> str:
-    return f"${value:,.0f}"
-
-
-def pct(value: float) -> str:
-    return f"{value:.1%}"
-
-
-def safe_divide(a: float, b: float) -> float:
-    return a / b if b else 0.0
-
-
-def calculate_freight(
-    fleet_name: str,
-    km_one_way: float,
-    driver_rate: float,
-    diesel_price: float,
-    avg_speed: float,
-    site_hours: float,
-    trip_type: str,
-    region_key: str,
-) -> float:
-    fleet = FLEET[fleet_name]
-    region = REGIONS[region_key]
-
-    total_km = km_one_way if trip_type == "One-way" else km_one_way * 2
-    fuel_per_km = fleet.litres_per_100km / 100 * diesel_price
-    vehicle_cost_per_km = fuel_per_km + fleet.maintenance_per_km
-    drive_hours = safe_divide(total_km, avg_speed)
-
-    labour_cost = (drive_hours + site_hours) * driver_rate
-    vehicle_cost = total_km * vehicle_cost_per_km
-
-    return (labour_cost + vehicle_cost) * region.freight_factor
-
-
-def default_product() -> dict:
-    return {
-        "pipe_size": 375,
-        "quantity_m": 100.0,
-        "pricing_method": "Price Adjustment",
-        "price_adjustment_pct": 0,
-        "manual_revenue": 0.0,
-        "target_margin_pct": 30.0,
-    }
-
-
-def add_delivery() -> None:
-    new_id = st.session_state.next_delivery_id
-    st.session_state.next_delivery_id += 1
-
-    st.session_state.deliveries.append(
-        {
-            "id": new_id,
-            "products": [default_product()],
-            "freight_method": "Auto calculate",
-            "zone": "Metro",
-            "km_one_way": 30.0,
-            "trip_type": "Return",
-            "fleet": "6.5m truck",
-            "site_hours": 1.0,
-            "manual_freight": 0.0,
-        }
-    )
-
-
-def remove_delivery(delivery_id: int) -> None:
-    st.session_state.deliveries = [
-        d for d in st.session_state.deliveries if d["id"] != delivery_id
-    ]
-
-
-def add_product_to_delivery(delivery_id: int) -> None:
-    for delivery in st.session_state.deliveries:
-        if delivery["id"] == delivery_id:
-            delivery["products"].append(default_product())
-            break
-
-
-def remove_product_from_delivery(delivery_id: int, product_index: int) -> None:
-    for delivery in st.session_state.deliveries:
-        if delivery["id"] == delivery_id and len(delivery["products"]) > 1:
-            delivery["products"].pop(product_index)
-            break
-
-
-def normalise_product(product: dict, default_target_margin: float) -> None:
-    if "discount_pct" in product and "price_adjustment_pct" not in product:
-        product["price_adjustment_pct"] = product.pop("discount_pct")
-
-    product.setdefault("pricing_method", "Price Adjustment")
-    product.setdefault("price_adjustment_pct", 0)
-    product.setdefault("manual_revenue", 0.0)
-    product.setdefault("target_margin_pct", default_target_margin * 100)
-
-
-def calculate_delivery(delivery: dict, global_inputs: dict, region_key: str) -> tuple[list[dict], float]:
-    region = REGIONS[region_key]
-
-    if delivery["freight_method"] == "Manual override":
-        delivery_freight = delivery["manual_freight"]
-    else:
-        delivery_freight = calculate_freight(
-            fleet_name=delivery["fleet"],
-            km_one_way=delivery["km_one_way"],
-            driver_rate=global_inputs["driver_rate"],
-            diesel_price=global_inputs["diesel_price"],
-            avg_speed=global_inputs["avg_speed"],
-            site_hours=delivery["site_hours"],
-            trip_type=delivery["trip_type"],
-            region_key=region_key,
-        )
-
-    base_rows = []
-    total_base_revenue = 0.0
-
-    for product in delivery["products"]:
-        normalise_product(product, region.target_margin)
-
-        pipe_size = product["pipe_size"]
-        quantity_m = product["quantity_m"]
-        pricing_method = product["pricing_method"]
-
-        rrp_per_m = PIPE_RRP[pipe_size]
-        cost_per_m = PIPE_COST[pipe_size]
-
-        rrp_revenue = rrp_per_m * quantity_m
-        product_cost = cost_per_m * quantity_m
-
-        if pricing_method == "Manual Revenue":
-            revenue = product["manual_revenue"]
-            net_price_per_m = safe_divide(revenue, quantity_m)
-            price_adjustment_pct = safe_divide(rrp_revenue - revenue, rrp_revenue) * 100
-
-        elif pricing_method == "Target Margin":
-            target_margin = product["target_margin_pct"] / 100
-            revenue = safe_divide(product_cost, 1 - target_margin)
-            net_price_per_m = safe_divide(revenue, quantity_m)
-            price_adjustment_pct = safe_divide(rrp_revenue - revenue, rrp_revenue) * 100
-
-        else:
-            price_adjustment_pct = product["price_adjustment_pct"]
-            net_price_per_m = rrp_per_m * (1 - price_adjustment_pct / 100)
-            revenue = net_price_per_m * quantity_m
-
-        total_base_revenue += revenue
-
-        base_rows.append(
-            {
-                "Delivery": f"Delivery {delivery['id']}",
-                "Pricing Method": pricing_method,
-                "Pipe Size": f"{pipe_size}mm",
-                "Quantity m": quantity_m,
-                "RRP / m": rrp_per_m,
-                "Price Adjustment %": price_adjustment_pct,
-                "Net Price / m": net_price_per_m,
-                "RRP Revenue": rrp_revenue,
-                "Revenue": revenue,
-                "Product Cost": product_cost,
-                "Target Margin %": product.get("target_margin_pct"),
-            }
-        )
-
-    final_rows = []
-
-    for row in base_rows:
-        allocation_pct = safe_divide(row["Revenue"], total_base_revenue)
-        freight_allocated = delivery_freight * allocation_pct
-
-        total_cost = row["Product Cost"] + freight_allocated
-
-        if row["Pricing Method"] == "Target Margin":
-            target_margin = row["Target Margin %"] / 100
-            row["Revenue"] = safe_divide(total_cost, 1 - target_margin)
-            row["Net Price / m"] = safe_divide(row["Revenue"], row["Quantity m"])
-            row["Price Adjustment %"] = safe_divide(
-                row["RRP Revenue"] - row["Revenue"],
-                row["RRP Revenue"],
-            ) * 100
-
-        contribution = row["Revenue"] - total_cost
-        contribution_margin = safe_divide(contribution, row["Revenue"])
-
-        rrp_contribution = row["RRP Revenue"] - total_cost
-        rrp_margin = safe_divide(rrp_contribution, row["RRP Revenue"])
-
-        margin_lost = rrp_contribution - contribution
-        margin_lost_pp = (rrp_margin - contribution_margin) * 100
-
-        row.update(
-            {
-                "Freight Allocated": freight_allocated,
-                "Total Cost": total_cost,
-                "Contribution $": contribution,
-                "Contribution Margin %": contribution_margin,
-                "RRP Contribution $": rrp_contribution,
-                "RRP Margin %": rrp_margin,
-                "Margin Lost $": margin_lost,
-                "Margin Lost pp": margin_lost_pp,
-            }
-        )
-
-        final_rows.append(row)
-
-    return final_rows, delivery_freight
-
-
-def build_peer_comparison(
-    detail_df: pd.DataFrame,
-    peer_freight: Dict[str, float],
-    region_key: str,
-    total_revenue: float,
-    total_freight: float,
-) -> pd.DataFrame:
-    region = REGIONS[region_key]
-    total_quantity = detail_df["Quantity m"].sum()
-
-    rows = []
-
-    for competitor in COMPETITORS:
-        product_package = 0.0
-
-        for _, row in detail_df.iterrows():
-            product_package += (
-                row["RRP / m"]
-                * row["Quantity m"]
-                * competitor.price_factor
-                * region.market_factor
-            )
-
-        freight = peer_freight.get(competitor.name, 0.0)
-        total_package = product_package + freight
-
-        rows.append(
-            {
-                "Supplier": competitor.name,
-                "Positioning": competitor.positioning,
-                "Product Package": product_package,
-                "Peer Freight": freight,
-                "Total Package": total_package,
-                "Average $ / m": safe_divide(total_package, total_quantity),
-            }
-        )
-
-    rows.append(
-        {
-            "Supplier": "Atlan Proposed Package",
-            "Positioning": "Current quote",
-            "Product Package": total_revenue,
-            "Peer Freight": total_freight,
-            "Total Package": total_revenue + total_freight,
-            "Average $ / m": safe_divide(total_revenue + total_freight, total_quantity),
-        }
-    )
-
-    return pd.DataFrame(rows).sort_values("Total Package").reset_index(drop=True)
 
 
 st.markdown(
@@ -430,52 +170,236 @@ st.markdown(
     font-weight: 850;
     color: #071B3A;
 }
-
-[data-testid="stMetricDelta"] { font-size: 11px; }
-
-.stSelectbox label,
-.stNumberInput label,
-.stRadio label {
-    font-size: 11px !important;
-    font-weight: 650 !important;
-}
-
-.stTextInput input,
-.stNumberInput input {
-    font-size: 12px !important;
-}
-
-.stSelectbox div[data-baseweb="select"] {
-    min-height: 34px;
-}
-
-div.stButton > button {
-    border-radius: 10px;
-    font-weight: 700;
-    font-size: 12px;
-    padding: 0.35rem 0.8rem;
-}
-
-div.stButton > button[kind="primary"] {
-    background: #0B5CFF;
-    border-color: #0B5CFF;
-}
-
-section[data-testid="stSidebar"] {
-    background: #FFFFFF;
-    border-right: 1px solid rgba(7,27,58,0.08);
-}
-
-[data-testid="stDataFrame"] { font-size: 11px; }
-
-.streamlit-expanderHeader {
-    font-size: 13px !important;
-    font-weight: 700 !important;
-}
 </style>
 """,
     unsafe_allow_html=True,
 )
+
+
+def money(value: float) -> str:
+    return f"${value:,.0f}"
+
+
+def pct(value: float) -> str:
+    return f"{value:.1%}"
+
+
+def safe_divide(a: float, b: float) -> float:
+    return a / b if b else 0.0
+
+
+def calculate_freight(
+    fleet_name: str,
+    km_one_way: float,
+    driver_rate: float,
+    diesel_price: float,
+    avg_speed: float,
+    site_hours: float,
+    trip_type: str,
+    region_key: str,
+) -> float:
+    fleet = FLEET[fleet_name]
+    region = REGIONS[region_key]
+
+    total_km = km_one_way if trip_type == "One-way" else km_one_way * 2
+    fuel_per_km = fleet.litres_per_100km / 100 * diesel_price
+    vehicle_cost_per_km = fuel_per_km + fleet.maintenance_per_km
+    drive_hours = safe_divide(total_km, avg_speed)
+
+    labour_cost = (drive_hours + site_hours) * driver_rate
+    vehicle_cost = total_km * vehicle_cost_per_km
+
+    return (labour_cost + vehicle_cost) * region.freight_factor
+
+
+def default_product() -> dict:
+    pipe_size = 375
+    return {
+        "pipe_size": pipe_size,
+        "quantity_m": 100.0,
+        "price_per_m": float(PIPE_RRP[pipe_size]),
+        "cost_per_m": float(DEFAULT_PIPE_COST[pipe_size]),
+    }
+
+
+def normalise_product(product: dict) -> None:
+    pipe_size = product.get("pipe_size", 375)
+    product.setdefault("quantity_m", 100.0)
+    product.setdefault("price_per_m", float(PIPE_RRP[pipe_size]))
+    product.setdefault("cost_per_m", float(DEFAULT_PIPE_COST[pipe_size]))
+
+
+def add_delivery() -> None:
+    new_id = st.session_state.next_delivery_id
+    st.session_state.next_delivery_id += 1
+
+    st.session_state.deliveries.append(
+        {
+            "id": new_id,
+            "products": [default_product()],
+            "freight_method": "Auto calculate",
+            "zone": "Metro",
+            "km_one_way": 30.0,
+            "trip_type": "Return",
+            "fleet": "6.5m truck",
+            "site_hours": 1.0,
+            "manual_freight": 0.0,
+        }
+    )
+
+
+def remove_delivery(delivery_id: int) -> None:
+    st.session_state.deliveries = [
+        d for d in st.session_state.deliveries if d["id"] != delivery_id
+    ]
+
+
+def add_product_to_delivery(delivery_id: int) -> None:
+    for delivery in st.session_state.deliveries:
+        if delivery["id"] == delivery_id:
+            delivery["products"].append(default_product())
+            break
+
+
+def remove_product_from_delivery(delivery_id: int, product_index: int) -> None:
+    for delivery in st.session_state.deliveries:
+        if delivery["id"] == delivery_id and len(delivery["products"]) > 1:
+            delivery["products"].pop(product_index)
+            break
+
+
+def calculate_delivery(delivery: dict, global_inputs: dict, region_key: str) -> tuple[list[dict], float]:
+    if delivery["freight_method"] == "Manual override":
+        delivery_freight = delivery["manual_freight"]
+    else:
+        delivery_freight = calculate_freight(
+            fleet_name=delivery["fleet"],
+            km_one_way=delivery["km_one_way"],
+            driver_rate=global_inputs["driver_rate"],
+            diesel_price=global_inputs["diesel_price"],
+            avg_speed=global_inputs["avg_speed"],
+            site_hours=delivery["site_hours"],
+            trip_type=delivery["trip_type"],
+            region_key=region_key,
+        )
+
+    temp_rows = []
+    total_delivery_revenue = 0.0
+
+    for product in delivery["products"]:
+        normalise_product(product)
+
+        pipe_size = product["pipe_size"]
+        quantity_m = product["quantity_m"]
+        rrp_per_m = PIPE_RRP[pipe_size]
+        price_per_m = product["price_per_m"]
+        cost_per_m = product["cost_per_m"]
+
+        rrp_revenue = rrp_per_m * quantity_m
+        revenue = price_per_m * quantity_m
+        product_cost = cost_per_m * quantity_m
+        price_adjustment_pct = safe_divide(rrp_revenue - revenue, rrp_revenue) * 100
+
+        total_delivery_revenue += revenue
+
+        temp_rows.append(
+            {
+                "Delivery": f"Delivery {delivery['id']}",
+                "Pipe Size": f"{pipe_size}mm",
+                "Quantity m": quantity_m,
+                "RRP / m": rrp_per_m,
+                "Price / m": price_per_m,
+                "Cost / m": cost_per_m,
+                "Price Adjustment %": price_adjustment_pct,
+                "RRP Revenue": rrp_revenue,
+                "Revenue": revenue,
+                "Product Cost": product_cost,
+            }
+        )
+
+    final_rows = []
+
+    for row in temp_rows:
+        allocation_pct = safe_divide(row["Revenue"], total_delivery_revenue)
+        freight_allocated = delivery_freight * allocation_pct
+
+        total_cost = row["Product Cost"] + freight_allocated
+        contribution = row["Revenue"] - total_cost
+        contribution_margin = safe_divide(contribution, row["Revenue"])
+
+        rrp_contribution = row["RRP Revenue"] - total_cost
+        rrp_margin = safe_divide(rrp_contribution, row["RRP Revenue"])
+
+        margin_lost = rrp_contribution - contribution
+        margin_lost_pp = (rrp_margin - contribution_margin) * 100
+
+        row.update(
+            {
+                "Freight Allocated": freight_allocated,
+                "Total Cost": total_cost,
+                "Contribution $": contribution,
+                "Contribution Margin %": contribution_margin,
+                "RRP Contribution $": rrp_contribution,
+                "RRP Margin %": rrp_margin,
+                "Margin Lost $": margin_lost,
+                "Margin Lost pp": margin_lost_pp,
+            }
+        )
+
+        final_rows.append(row)
+
+    return final_rows, delivery_freight
+
+
+def build_peer_comparison(
+    detail_df: pd.DataFrame,
+    peer_freight: Dict[str, float],
+    region_key: str,
+    total_revenue: float,
+    total_freight: float,
+) -> pd.DataFrame:
+    region = REGIONS[region_key]
+    total_quantity = detail_df["Quantity m"].sum()
+
+    rows = []
+
+    for competitor in COMPETITORS:
+        product_package = 0.0
+
+        for _, row in detail_df.iterrows():
+            product_package += (
+                row["RRP / m"]
+                * row["Quantity m"]
+                * competitor.price_factor
+                * region.market_factor
+            )
+
+        freight = peer_freight.get(competitor.name, 0.0)
+        total_package = product_package + freight
+
+        rows.append(
+            {
+                "Supplier": competitor.name,
+                "Positioning": competitor.positioning,
+                "Product Package": product_package,
+                "Peer Freight": freight,
+                "Total Package": total_package,
+                "Average $ / m": safe_divide(total_package, total_quantity),
+            }
+        )
+
+    rows.append(
+        {
+            "Supplier": "Atlan Proposed Package",
+            "Positioning": "Current quote",
+            "Product Package": total_revenue,
+            "Peer Freight": total_freight,
+            "Total Package": total_revenue + total_freight,
+            "Average $ / m": safe_divide(total_revenue + total_freight, total_quantity),
+        }
+    )
+
+    return pd.DataFrame(rows).sort_values("Total Package").reset_index(drop=True)
 
 
 if "deliveries" not in st.session_state:
@@ -493,8 +417,8 @@ st.markdown(
 <div class="hero">
     <h1>Atlan Stormwater Pricing Engine</h1>
     <p>
-        Build a multi-delivery pipe package, apply price adjustments, manually edit revenue,
-        set target margins, calculate freight by delivery, and compare Atlan’s total package against peers.
+        Build a multi-delivery pipe package, manually adjust price, cost and state target margin,
+        calculate freight by delivery, and compare Atlan’s package against peers.
     </p>
 </div>
 """,
@@ -512,10 +436,15 @@ with st.sidebar:
     )
 
     region = REGIONS[region_key]
-    target_margin = region.target_margin
-
     st.caption(region.notes)
-    st.metric("State Target Margin", pct(target_margin))
+
+    target_margin = st.number_input(
+        "State Target Margin %",
+        min_value=0.0,
+        max_value=80.0,
+        value=float(region.target_margin * 100),
+        step=1.0,
+    ) / 100
 
     st.divider()
 
@@ -543,7 +472,7 @@ top_left, top_right = st.columns([0.78, 0.22])
 
 with top_left:
     st.markdown("### Package Builder")
-    st.caption("Each delivery can include multiple pipe sizes. Freight is allocated across products.")
+    st.caption("Each delivery can include multiple pipe sizes. Price and cost can be manually adjusted.")
 
 with top_right:
     if st.button("+ Add Delivery", type="primary", use_container_width=True):
@@ -561,7 +490,7 @@ for delivery in list(st.session_state.deliveries):
     with h1:
         st.markdown(f'<div class="title">Delivery {delivery["id"]}</div>', unsafe_allow_html=True)
         st.markdown(
-            '<div class="subtle">Add pipe sizes, quantity, revenue, margin or price adjustment.</div>',
+            '<div class="subtle">Add pipe sizes, quantity, price/m and cost/m.</div>',
             unsafe_allow_html=True,
         )
 
@@ -572,9 +501,11 @@ for delivery in list(st.session_state.deliveries):
                 st.rerun()
 
     for idx, product in enumerate(list(delivery["products"])):
-        normalise_product(product, target_margin)
+        normalise_product(product)
 
-        p1, p2, p3, p4, p5, p6, p7 = st.columns([0.13, 0.13, 0.12, 0.12, 0.18, 0.18, 0.14])
+        p1, p2, p3, p4, p5, p6, p7 = st.columns([0.13, 0.13, 0.12, 0.15, 0.15, 0.16, 0.16])
+
+        old_pipe_size = product["pipe_size"]
 
         with p1:
             product["pipe_size"] = st.selectbox(
@@ -584,6 +515,10 @@ for delivery in list(st.session_state.deliveries):
                 key=f"pipe_{delivery['id']}_{idx}",
                 format_func=lambda x: f"{x}mm",
             )
+
+        if product["pipe_size"] != old_pipe_size:
+            product["price_per_m"] = float(PIPE_RRP[product["pipe_size"]])
+            product["cost_per_m"] = float(DEFAULT_PIPE_COST[product["pipe_size"]])
 
         with p2:
             product["quantity_m"] = st.number_input(
@@ -598,52 +533,27 @@ for delivery in list(st.session_state.deliveries):
             st.metric("RRP/m", f"${PIPE_RRP[product['pipe_size']]:,.0f}")
 
         with p4:
-            st.metric("Cost/m", f"${PIPE_COST[product['pipe_size']]:,.0f}")
+            product["price_per_m"] = st.number_input(
+                "Price / m",
+                min_value=0.0,
+                value=float(product["price_per_m"]),
+                step=5.0,
+                key=f"price_per_m_{delivery['id']}_{idx}",
+            )
 
         with p5:
-            product["pricing_method"] = st.selectbox(
-                "Pricing Method",
-                ["Price Adjustment", "Manual Revenue", "Target Margin"],
-                index=["Price Adjustment", "Manual Revenue", "Target Margin"].index(
-                    product.get("pricing_method", "Price Adjustment")
-                ),
-                key=f"pricing_method_{delivery['id']}_{idx}",
+            product["cost_per_m"] = st.number_input(
+                "Cost / m",
+                min_value=0.0,
+                value=float(product["cost_per_m"]),
+                step=5.0,
+                key=f"cost_per_m_{delivery['id']}_{idx}",
             )
 
         with p6:
-            if product["pricing_method"] == "Price Adjustment":
-                product["price_adjustment_pct"] = st.selectbox(
-                    "Price Adjustment",
-                    PRICE_ADJUSTMENT_OPTIONS,
-                    index=PRICE_ADJUSTMENT_OPTIONS.index(product.get("price_adjustment_pct", 0)),
-                    key=f"price_adjustment_{delivery['id']}_{idx}",
-                    format_func=lambda x: f"{x}%",
-                )
-
-            elif product["pricing_method"] == "Manual Revenue":
-                suggested_revenue = PIPE_RRP[product["pipe_size"]] * product["quantity_m"]
-                current_manual_revenue = product.get("manual_revenue", 0.0)
-
-                if current_manual_revenue == 0:
-                    current_manual_revenue = suggested_revenue
-
-                product["manual_revenue"] = st.number_input(
-                    "Revenue $",
-                    min_value=0.0,
-                    value=float(current_manual_revenue),
-                    step=100.0,
-                    key=f"manual_revenue_{delivery['id']}_{idx}",
-                )
-
-            else:
-                product["target_margin_pct"] = st.number_input(
-                    "Target Margin %",
-                    min_value=0.0,
-                    max_value=80.0,
-                    value=float(product.get("target_margin_pct", target_margin * 100)),
-                    step=1.0,
-                    key=f"target_margin_{delivery['id']}_{idx}",
-                )
+            rrp = PIPE_RRP[product["pipe_size"]]
+            price_adjustment = safe_divide(rrp - product["price_per_m"], rrp) * 100
+            st.metric("Price Adjustment", f"{price_adjustment:.1f}%")
 
         with p7:
             if len(delivery["products"]) > 1:
@@ -784,15 +694,15 @@ s10.metric("Lines", len(detail_df))
 if package_margin < risk_margin:
     risk_class = "bad"
     risk_title = "High margin risk"
-    risk_message = "Below the high-risk threshold. Review price adjustment, revenue, freight recovery or cost."
+    risk_message = "Below the high-risk threshold. Review price, cost, freight recovery or price adjustment."
 elif package_margin < target_margin:
     risk_class = "watch"
     risk_title = "Margin below state target"
-    risk_message = f"Above the risk floor but below the {region_key} target margin of {target_margin:.1%}."
+    risk_message = f"Above the risk floor but below the selected {region_key} target margin of {target_margin:.1%}."
 else:
     risk_class = "good"
     risk_title = "Healthy package margin"
-    risk_message = f"Above the {region_key} target contribution margin of {target_margin:.1%}."
+    risk_message = f"Above the selected {region_key} target contribution margin of {target_margin:.1%}."
 
 st.markdown(
     f"""
@@ -800,7 +710,7 @@ st.markdown(
     <b>{risk_title}</b><br>
     {risk_message}
     At RRP, margin would be <b>{rrp_margin:.1%}</b>. 
-    After price adjustment, revenue override and freight, it is <b>{package_margin:.1%}</b>. 
+    After price adjustment and freight, it is <b>{package_margin:.1%}</b>. 
     Contribution at risk is <b>{money(margin_lost)}</b>.
 </div>
 """,
@@ -928,12 +838,12 @@ with st.expander("Detailed Product Output", expanded=False):
             {
                 "Quantity m": "{:,.0f}",
                 "RRP / m": "${:,.2f}",
+                "Price / m": "${:,.2f}",
+                "Cost / m": "${:,.2f}",
                 "Price Adjustment %": "{:.1f}%",
-                "Net Price / m": "${:,.2f}",
                 "RRP Revenue": "${:,.0f}",
                 "Revenue": "${:,.0f}",
                 "Product Cost": "${:,.0f}",
-                "Target Margin %": "{:.1f}%",
                 "Freight Allocated": "${:,.0f}",
                 "Total Cost": "${:,.0f}",
                 "Contribution $": "${:,.0f}",
