@@ -170,14 +170,19 @@ def safe_divide(a: float, b: float) -> float:
 # ---------------------------------------------------------------------------
 
 def _read_spreadsheet(file_bytes: bytes, filename: str) -> pd.DataFrame:
-    """Read xlsx, xls, or csv with the correct engine."""
+    """Read xlsx, xls (including XML-disguised), or csv robustly."""
     name = filename.lower()
     if name.endswith(".csv"):
         return pd.read_csv(io.BytesIO(file_bytes))
-    elif name.endswith(".xls"):
+    # Detect if file is actually XML content (NetSuite exports .xls as XML)
+    sniff = file_bytes[:200].lstrip()
+    is_xml = sniff.startswith(b"<?xml") or sniff.startswith(b"<html") or b"<Workbook" in sniff
+    if is_xml:
+        tables = pd.read_html(io.BytesIO(file_bytes), header=0)
+        return tables[0]
+    if name.endswith(".xls"):
         return pd.read_excel(io.BytesIO(file_bytes), engine="xlrd")
-    else:  # .xlsx and anything else
-        return pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+    return pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
 
 
 @st.cache_data(show_spinner=False)
