@@ -15,6 +15,13 @@ st.set_page_config(page_title="Atlan Pricing Engine", page_icon="💧", layout="
 
 
 # ============================================================
+# IMPORTANT REQUIREMENTS
+# ============================================================
+# In your Streamlit environment, install:
+# pip install streamlit pandas requests openpyxl xlrd
+
+
+# ============================================================
 # CONFIG
 # ============================================================
 
@@ -188,7 +195,7 @@ st.markdown(
 
 
 # ============================================================
-# GENERIC HELPERS
+# HELPERS
 # ============================================================
 
 def money(value: float) -> str:
@@ -207,8 +214,7 @@ def clean_money_value(value) -> Optional[float]:
     if value is None or pd.isna(value):
         return None
 
-    value = str(value)
-    value = value.replace("$", "").replace(",", "").strip()
+    value = str(value).replace("$", "").replace(",", "").strip()
 
     if value == "":
         return None
@@ -226,24 +232,18 @@ def extract_pipe_size(text: str) -> Optional[int]:
     text = str(text).upper()
 
     match = re.search(r"(\d{2,4})\s*MM", text)
-
     if match:
         return int(match.group(1))
 
     match = re.search(r"ATF(\d{2,4})", text)
-
     if match:
         return int(match.group(1))
 
     return None
 
 
-def normalise_state(value: str) -> str:
-    return str(value).upper().strip()
-
-
 def state_matches(source_state: str, region_key: str) -> bool:
-    source_state = normalise_state(source_state)
+    source_state = str(source_state).upper().strip()
 
     if region_key in source_state:
         return True
@@ -261,7 +261,7 @@ def state_matches(source_state: str, region_key: str) -> bool:
 
 
 # ============================================================
-# FILE LOADERS
+# FILE LOADING
 # ============================================================
 
 def parse_xml_spreadsheet(file_bytes: bytes) -> pd.DataFrame:
@@ -336,8 +336,8 @@ def load_excel_from_url(url: str) -> pd.DataFrame:
 
     if "text/html" in content_type:
         raise ValueError(
-            "SharePoint returned an HTML page instead of the Excel file. "
-            "Upload the file manually or use a direct download link."
+            "SharePoint returned a login/web page instead of the Excel file. "
+            "Upload the file manually, or use a direct download link."
         )
 
     return load_excel_from_bytes(response.content)
@@ -351,7 +351,7 @@ def prepare_pipe_price_list(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
 
-    for col in [
+    needed_cols = [
         "Internal ID",
         "Name",
         "Type",
@@ -364,7 +364,9 @@ def prepare_pipe_price_list(df: pd.DataFrame) -> pd.DataFrame:
         "TAS",
         "VIC",
         "WA",
-    ]:
+    ]
+
+    for col in needed_cols:
         if col not in df.columns:
             df[col] = None
 
@@ -462,7 +464,11 @@ def prepare_competitor_prices(df: pd.DataFrame) -> pd.DataFrame:
     ] = df["Price"] / df["Length"]
 
     df["Competitor Pipe Size"] = df["Atlan Reference"].apply(extract_pipe_size)
-    df.loc[df["Competitor Pipe Size"].isna(), "Competitor Pipe Size"] = df["PipeSize"].apply(extract_pipe_size)
+
+    df.loc[
+        df["Competitor Pipe Size"].isna(),
+        "Competitor Pipe Size",
+    ] = df["PipeSize"].apply(extract_pipe_size)
 
     df = df[df["Competitor Price / m"].notna()].copy()
 
@@ -498,7 +504,7 @@ def calculate_freight(
 
 
 # ============================================================
-# SESSION HELPERS
+# PRODUCT HELPERS
 # ============================================================
 
 def default_product(pipe_df: pd.DataFrame, region_key: str) -> dict:
@@ -516,6 +522,18 @@ def default_product(pipe_df: pd.DataFrame, region_key: str) -> dict:
         "price_per_m": float(state_price),
         "cost_per_m": float(state_price * 0.65),
     }
+
+
+def update_product_from_selected_item(product: dict, selected_row: pd.Series, region_key: str) -> None:
+    state_price = get_state_price(selected_row, region_key)
+
+    product["internal_id"] = str(selected_row.get("Internal ID", ""))
+    product["item_name"] = str(selected_row.get("Name", ""))
+    product["display_name"] = str(selected_row.get("Display Name", ""))
+    product["pipe_size"] = selected_row.get("Pipe Size")
+    product["rrp_per_m"] = float(state_price)
+    product["price_per_m"] = float(state_price)
+    product["cost_per_m"] = float(state_price * 0.65)
 
 
 def normalise_product(product: dict, pipe_df: pd.DataFrame, region_key: str) -> None:
@@ -541,16 +559,17 @@ def normalise_product(product: dict, pipe_df: pd.DataFrame, region_key: str) -> 
     product.setdefault("cost_per_m", float(state_price * 0.65))
 
 
-def update_product_from_selected_item(product: dict, selected_row: pd.Series, region_key: str) -> None:
-    state_price = get_state_price(selected_row, region_key)
+def apply_state_prices_to_all_products(pipe_df: pd.DataFrame, region_key: str) -> None:
+    for delivery in st.session_state.get("deliveries", []):
+        for product in delivery.get("products", []):
+            item_index = int(product.get("item_index", 0))
 
-    product["internal_id"] = str(selected_row.get("Internal ID", ""))
-    product["item_name"] = str(selected_row.get("Name", ""))
-    product["display_name"] = str(selected_row.get("Display Name", ""))
-    product["pipe_size"] = selected_row.get("Pipe Size")
-    product["rrp_per_m"] = float(state_price)
-    product["price_per_m"] = float(state_price)
-    product["cost_per_m"] = float(state_price * 0.65)
+            if item_index < 0 or item_index >= len(pipe_df):
+                item_index = 0
+                product["item_index"] = 0
+
+            selected_row = pipe_df.iloc[item_index]
+            update_product_from_selected_item(product, selected_row, region_key)
 
 
 def add_delivery(pipe_df: pd.DataFrame, region_key: str) -> None:
@@ -808,9 +827,9 @@ st.markdown(
 <div class="hero">
     <h1>Atlan Stormwater Pricing Engine</h1>
     <p>
-        Pipe pricing is sourced from the NetSuite price list by state.
-        Competitor pricing is sourced from the submitted competitor price register.
-        You can manually override state target margin, price/m and cost/m.
+        Pipe pricing is sourced from the NetSuite price list by selected state.
+        Changing the state automatically refreshes the selected pipe prices.
+        Manual price/m and cost/m override is still available.
     </p>
 </div>
 """,
@@ -819,7 +838,7 @@ st.markdown(
 
 
 # ============================================================
-# SIDEBAR LOAD DATA
+# SIDEBAR
 # ============================================================
 
 with st.sidebar:
@@ -851,6 +870,12 @@ with st.sidebar:
             st.stop()
 
         st.caption(f"{len(pipe_df):,.0f} pipe-related items loaded.")
+
+    except ImportError as e:
+        st.error("Excel support package missing. Install openpyxl and xlrd, then restart Streamlit.")
+        st.code("pip install openpyxl xlrd")
+        st.caption(str(e))
+        st.stop()
 
     except Exception as e:
         st.error("Could not load the NetSuite price list. Upload the file manually.")
@@ -944,8 +969,16 @@ if "deliveries" not in st.session_state:
 if "next_delivery_id" not in st.session_state:
     st.session_state.next_delivery_id = 1
 
+if "last_region_key" not in st.session_state:
+    st.session_state.last_region_key = region_key
+
 if not st.session_state.deliveries:
     add_delivery(pipe_df, region_key)
+
+if st.session_state.last_region_key != region_key:
+    apply_state_prices_to_all_products(pipe_df, region_key)
+    st.session_state.last_region_key = region_key
+    st.rerun()
 
 
 # ============================================================
@@ -956,9 +989,7 @@ top_left, top_right = st.columns([0.78, 0.22])
 
 with top_left:
     st.markdown("### Package Builder")
-    st.caption(
-        "Select pipe item. Price/m is picked from the selected state price column and can be manually changed."
-    )
+    st.caption("Select pipe item. Price/m is picked from the selected state price column and can be manually changed.")
 
 with top_right:
     if st.button("+ Add Delivery", type="primary", use_container_width=True):
@@ -1160,7 +1191,7 @@ for delivery in list(st.session_state.deliveries):
 
 
 # ============================================================
-# SUMMARY
+# EXEC SUMMARY
 # ============================================================
 
 detail_df = pd.DataFrame(all_rows)
