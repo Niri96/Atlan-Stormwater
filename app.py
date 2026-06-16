@@ -236,9 +236,9 @@ def get_item_price(netsuite_df: pd.DataFrame, item_name: str, region_key: str) -
             return None
 
 
-def get_competitor_prices(competitor_df: pd.DataFrame, region_key: str) -> Dict[str, Dict]:
+def get_competitor_prices(competitor_df: pd.DataFrame, region_key: str) -> Dict[str, pd.DataFrame]:
     """
-    Returns dict: {competitor_name: {"avg_price_per_m": float, "entries": int}}
+    Returns dict: {competitor_name: DataFrame with columns [pipe_size_mm, price_m]}
     Filtered to the relevant state group for region_key.
     """
     state_vals = COMPETITOR_STATE_MAP.get(region_key, [region_key])
@@ -248,19 +248,39 @@ def get_competitor_prices(competitor_df: pd.DataFrame, region_key: str) -> Dict[
     if subset.empty:
         return {}
 
-    # parse Price/m
-    subset["price_m"] = pd.to_numeric(subset.get("Price/m", subset.get("Price / m", None)), errors="coerce")
+    # Parse Price/m
+    price_col = "Price/m" if "Price/m" in subset.columns else "Price / m"
+    subset["price_m"] = pd.to_numeric(subset.get(price_col, pd.Series(dtype=float)), errors="coerce")
+
+    # Parse pipe size
+    pipe_col = "PipeSize" if "PipeSize" in subset.columns else "Pipe Size"
+    if pipe_col in subset.columns:
+        subset["pipe_size_mm"] = (
+            subset[pipe_col].astype(str)
+            .str.replace(r"[^\d.]", "", regex=True)
+            .pipe(pd.to_numeric, errors="coerce")
+        )
+    else:
+        subset["pipe_size_mm"] = float("nan")
+
     subset = subset.dropna(subset=["price_m"])
 
     result = {}
     for comp, grp in subset.groupby("Competitor"):
-        result[str(comp)] = {
-            "avg_price_per_m": grp["price_m"].mean(),
-            "entries": len(grp),
-            "min": grp["price_m"].min(),
-            "max": grp["price_m"].max(),
-        }
+        result[str(comp)] = grp[["pipe_size_mm", "price_m"]].copy().reset_index(drop=True)
     return result
+
+
+def closest_competitor_price(comp_df: pd.DataFrame, target_size_mm: float) -> Optional[float]:
+    """
+    Return the price/m for the competitor row whose pipe_size_mm is closest to target_size_mm.
+    Falls back to overall average if no size data available.
+    """
+    sized = comp_df.dropna(subset=["pipe_size_mm"])
+    if sized.empty:
+        return comp_df["price_m"].mean() if not comp_df.empty else None
+    idx = (sized["pipe_size_mm"] - target_size_mm).abs().idxmin()
+    return float(sized.loc[idx, "price_m"])
 
 
 # ---------------------------------------------------------------------------
@@ -409,37 +429,59 @@ def calculate_delivery(delivery: dict, global_inputs: dict, region_key: str) -> 
 
 def build_peer_comparison(
     detail_df: pd.DataFrame,
-    competitor_intel: Dict[str, Dict],
+    competitor_intel: Dict[str, pd.DataFrame],
     total_revenue: float,
     total_freight: float,
 ) -> pd.DataFrame:
+    """
+    For each competitor, match each line item to the closest pipe size in their data,
+    multiply that price/m by the line quantity, then sum to get a like-for-like package value.
+    """
     total_quantity = detail_df["Quantity m"].sum()
 
+    # Extract numeric pipe size from item name for each line (e.g. "150MM ADS..." -> 150)
+    def extract_size(item_name: str) -> float:
+        import re
+        m = re.search(r"(\d{2,4})", str(item_name))
+        return float(m.group(1)) if m else float("nan")
+
+    detail_df = detail_df.copy()
+    detail_df["_size_mm"] = detail_df["Item"].apply(extract_size)
+
     rows = []
-    for comp_name, comp_data in competitor_intel.items():
-        # estimate competitor total package: avg $/m × total quantity + freight (unknown, use Atlan's)
-        comp_package = comp_data["avg_price_per_m"] * total_quantity
+    for comp_name, comp_df in competitor_intel.items():
+        comp_package = 0.0
+        line_details = []
+        for _, line in detail_df.iterrows():
+            size_mm = line["_size_mm"]
+            qty = line["Quantity m"]
+            price = closest_competitor_price(comp_df, size_mm) if not pd.isna(size_mm) else comp_df["price_m"].mean()
+            if price is None:
+                price = 0.0
+            comp_package += price * qty
+            line_details.append(f"{size_mm:.0f}mm @ ${price:.2f}/m")
+
         rows.append(
             {
                 "Supplier": comp_name,
-                "Avg $/m": comp_data["avg_price_per_m"],
+                "Matched Lines": len(detail_df),
                 "Est. Product Package": comp_package,
                 "Peer Freight (est.)": total_freight,
                 "Est. Total Package": comp_package + total_freight,
-                "Data Points": comp_data["entries"],
-                "Price Range": f"${comp_data['min']:,.2f} – ${comp_data['max']:,.2f}",
+                "Avg $/m": safe_divide(comp_package, total_quantity),
+                "Size Matches": " | ".join(line_details),
             }
         )
 
     rows.append(
         {
             "Supplier": "Atlan Proposed Package",
-            "Avg $/m": safe_divide(total_revenue, total_quantity),
+            "Matched Lines": len(detail_df),
             "Est. Product Package": total_revenue,
             "Peer Freight (est.)": total_freight,
             "Est. Total Package": total_revenue + total_freight,
-            "Data Points": len(detail_df),
-            "Price Range": "—",
+            "Avg $/m": safe_divide(total_revenue, total_quantity),
+            "Size Matches": "—",
         }
     )
 
@@ -812,7 +854,7 @@ if competitor_df is not None:
                     "Est. Product Package": "${:,.0f}",
                     "Peer Freight (est.)": "${:,.0f}",
                     "Est. Total Package": "${:,.0f}",
-                    "Data Points": "{:.0f}",
+                    "Matched Lines": "{:.0f}",
                 }
             ),
             use_container_width=True,
