@@ -238,9 +238,10 @@ def get_item_price(netsuite_df: pd.DataFrame, item_name: str, region_key: str) -
 
 def get_competitor_prices(competitor_df: pd.DataFrame, region_key: str) -> Dict[str, pd.DataFrame]:
     """
-    Returns dict: {competitor_name: DataFrame with columns [pipe_size_mm, price_m]}
-    Filtered to the relevant state group for region_key.
+    Returns dict: {competitor_name: DataFrame with columns [pipe_size_mm, price_m, submission_date]}
+    Uses only the LATEST submission per competitor+size. Filtered to region.
     """
+    import re
     state_vals = COMPETITOR_STATE_MAP.get(region_key, [region_key])
     mask = competitor_df["State"].str.strip().isin(state_vals)
     subset = competitor_df[mask].copy()
@@ -252,35 +253,61 @@ def get_competitor_prices(competitor_df: pd.DataFrame, region_key: str) -> Dict[
     price_col = "Price/m" if "Price/m" in subset.columns else "Price / m"
     subset["price_m"] = pd.to_numeric(subset.get(price_col, pd.Series(dtype=float)), errors="coerce")
 
-    # Parse pipe size
+    # Parse submission date
+    date_col = "SubmissionDate" if "SubmissionDate" in subset.columns else "Submission Date"
+    if date_col in subset.columns:
+        subset["submission_date"] = pd.to_datetime(subset[date_col], errors="coerce")
+    else:
+        subset["submission_date"] = pd.NaT
+
+    # Parse pipe size from PipeSize column, or fall back to Atlan Reference (ATF110 -> 110)
+    def extract_size_from_ref(val: str) -> float:
+        m = re.search(r"ATF(\d{2,4})", str(val).upper())
+        if m:
+            return float(m.group(1))
+        m2 = re.search(r"(\d{2,4})", str(val))
+        return float(m2.group(1)) if m2 else float("nan")
+
     pipe_col = "PipeSize" if "PipeSize" in subset.columns else "Pipe Size"
     if pipe_col in subset.columns:
-        subset["pipe_size_mm"] = (
-            subset[pipe_col].astype(str)
-            .str.replace(r"[^\d.]", "", regex=True)
-            .pipe(pd.to_numeric, errors="coerce")
+        subset["pipe_size_mm"] = pd.to_numeric(
+            subset[pipe_col].astype(str).str.replace(r"[^\d.]", "", regex=True),
+            errors="coerce"
         )
     else:
         subset["pipe_size_mm"] = float("nan")
+
+    ref_col = "Atlan Reference" if "Atlan Reference" in subset.columns else None
+    if ref_col:
+        from_ref = subset[ref_col].apply(extract_size_from_ref)
+        subset["pipe_size_mm"] = subset["pipe_size_mm"].combine_first(from_ref)
 
     subset = subset.dropna(subset=["price_m"])
 
     result = {}
     for comp, grp in subset.groupby("Competitor"):
-        result[str(comp)] = grp[["pipe_size_mm", "price_m"]].copy().reset_index(drop=True)
+        # Keep only the LATEST submission per pipe size
+        grp_sorted = grp.sort_values("submission_date", ascending=False, na_position="last")
+        latest = grp_sorted.drop_duplicates(subset=["pipe_size_mm"], keep="first")
+        result[str(comp)] = latest[["pipe_size_mm", "price_m", "submission_date"]].copy().reset_index(drop=True)
     return result
 
 
-def closest_competitor_price(comp_df: pd.DataFrame, target_size_mm: float) -> Optional[float]:
+def closest_competitor_price(comp_df: pd.DataFrame, target_size_mm: float) -> tuple[float, float, str]:
     """
-    Return the price/m for the competitor row whose pipe_size_mm is closest to target_size_mm.
-    Falls back to overall average if no size data available.
+    Find the closest pipe size to target_size_mm.
+    Returns (price_per_m, matched_size_mm, submission_date_str) from the latest submission.
     """
     sized = comp_df.dropna(subset=["pipe_size_mm"])
     if sized.empty:
-        return comp_df["price_m"].mean() if not comp_df.empty else None
-    idx = (sized["pipe_size_mm"] - target_size_mm).abs().idxmin()
-    return float(sized.loc[idx, "price_m"])
+        row = comp_df.sort_values("submission_date", ascending=False).iloc[0]
+        date_str = str(row["submission_date"])[:10] if pd.notna(row["submission_date"]) else "unknown"
+        return float(row["price_m"]), float("nan"), date_str
+
+    closest_idx = (sized["pipe_size_mm"] - target_size_mm).abs().idxmin()
+    row = sized.loc[closest_idx]
+    date_str = str(row["submission_date"])[:10] if pd.notna(row["submission_date"]) else "unknown"
+    return float(row["price_m"]), float(row["pipe_size_mm"]), date_str
 
 
 # ---------------------------------------------------------------------------
@@ -450,6 +477,10 @@ def build_peer_comparison(
     detail_df = detail_df.copy()
     detail_df["_size_mm"] = detail_df["Item"].apply(extract_size)
 
+    # Atlan package = Net Price/m (after discount) × quantity per line
+    atlan_package = sum(line["Net Price / m"] * line["Quantity m"] for _, line in detail_df.iterrows())
+    atlan_qty = detail_df["Quantity m"].sum()
+
     summary_rows = []
     line_rows = []
 
@@ -458,18 +489,20 @@ def build_peer_comparison(
         for _, line in detail_df.iterrows():
             size_mm = line["_size_mm"]
             qty = line["Quantity m"]
-            atlan_price_m = line["RRP / m"]
             atlan_net_m = line["Net Price / m"]
 
             if pd.isna(size_mm):
-                avg_price, matched_size, n_records = comp_df["price_m"].mean(), float("nan"), len(comp_df)
+                latest_row = comp_df.sort_values("submission_date", ascending=False).iloc[0]
+                comp_price_m = float(latest_row["price_m"])
+                matched_size = float("nan")
+                date_str = str(latest_row["submission_date"])[:10] if pd.notna(latest_row["submission_date"]) else "unknown"
             else:
-                avg_price, matched_size, n_records = closest_competitor_price(comp_df, size_mm)
+                comp_price_m, matched_size, date_str = closest_competitor_price(comp_df, size_mm)
 
-            if avg_price is None or pd.isna(avg_price):
-                avg_price = 0.0
+            if comp_price_m is None or pd.isna(comp_price_m):
+                comp_price_m = 0.0
 
-            comp_line_total = avg_price * qty
+            comp_line_total = comp_price_m * qty
             atlan_line_total = atlan_net_m * qty
             comp_package += comp_line_total
 
@@ -478,33 +511,33 @@ def build_peer_comparison(
                 "Item": line["Item"],
                 "Atlan Size (mm)": size_mm,
                 "Comp. Matched Size (mm)": matched_size,
-                "Records Used": n_records,
-                "Comp. Avg $/m": avg_price,
+                "Submission Date": date_str,
+                "Comp. $/m (latest)": comp_price_m,
                 "Atlan Net $/m": atlan_net_m,
-                "$/m Difference": atlan_net_m - avg_price,
+                "$/m Diff": atlan_net_m - comp_price_m,
                 "Qty m": qty,
                 "Comp. Line Total": comp_line_total,
                 "Atlan Line Total": atlan_line_total,
-                "Line $ Difference": atlan_line_total - comp_line_total,
+                "Line $ Diff": atlan_line_total - comp_line_total,
             })
 
         summary_rows.append({
             "Supplier": comp_name,
-            "Est. Product Package": comp_package,
-            "Peer Freight (est.)": total_freight,
-            "Est. Total Package": comp_package + total_freight,
-            "Avg $/m": safe_divide(comp_package, total_quantity),
+            "Product Package": comp_package,
+            "Freight": total_freight,
+            "Total Package": comp_package + total_freight,
+            "Avg $/m": safe_divide(comp_package, atlan_qty),
         })
 
     summary_rows.append({
         "Supplier": "✦ Atlan Proposed",
-        "Est. Product Package": total_revenue,
-        "Peer Freight (est.)": total_freight,
-        "Est. Total Package": total_revenue + total_freight,
-        "Avg $/m": safe_divide(total_revenue, total_quantity),
+        "Product Package": atlan_package,
+        "Freight": total_freight,
+        "Total Package": atlan_package + total_freight,
+        "Avg $/m": safe_divide(atlan_package, atlan_qty),
     })
 
-    summary_df = pd.DataFrame(summary_rows).sort_values("Est. Total Package").reset_index(drop=True)
+    summary_df = pd.DataFrame(summary_rows).sort_values("Total Package").reset_index(drop=True)
     line_df = pd.DataFrame(line_rows)
     return summary_df, line_df
 
@@ -878,16 +911,16 @@ if competitor_df is not None:
             summary_df.style.format(
                 {
                     "Avg $/m": "${:,.2f}",
-                    "Est. Product Package": "${:,.0f}",
-                    "Peer Freight (est.)": "${:,.0f}",
-                    "Est. Total Package": "${:,.0f}",
+                    "Product Package": "${:,.0f}",
+                    "Freight": "${:,.0f}",
+                    "Total Package": "${:,.0f}",
                 }
             ),
             use_container_width=True,
             hide_index=True,
         )
 
-        comp_packages = summary_df.loc[summary_df["Supplier"] != "✦ Atlan Proposed", "Est. Total Package"]
+        comp_packages = summary_df.loc[summary_df["Supplier"] != "✦ Atlan Proposed", "Total Package"]
         if not comp_packages.empty:
             peer_avg = comp_packages.mean()
             gap = safe_divide(total_revenue - peer_avg, peer_avg)
@@ -905,14 +938,13 @@ if competitor_df is not None:
                 fmt = {
                     "Atlan Size (mm)": "{:.0f}",
                     "Comp. Matched Size (mm)": "{:.0f}",
-                    "Records Used": "{:.0f}",
-                    "Comp. Avg $/m": "${:,.2f}",
+                    "Comp. $/m (latest)": "${:,.2f}",
                     "Atlan Net $/m": "${:,.2f}",
-                    "$/m Difference": "${:,.2f}",
+                    "$/m Diff": "${:,.2f}",
                     "Qty m": "{:,.0f}",
                     "Comp. Line Total": "${:,.0f}",
                     "Atlan Line Total": "${:,.0f}",
-                    "Line $ Difference": "${:,.0f}",
+                    "Line $ Diff": "${:,.0f}",
                 }
                 st.dataframe(line_df.style.format(fmt), use_container_width=True, hide_index=True)
 
