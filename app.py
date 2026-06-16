@@ -374,7 +374,8 @@ def calculate_delivery(delivery: dict, global_inputs: dict, region_key: str) -> 
         item_name = product.get("item_name", "")
         quantity_m = product["quantity_m"]
         discount_pct = product["discount_pct"]
-        rrp_per_m = product.get("rrp_per_m", 0.0) or 0.0
+        # Always re-resolve price from current region — never trust the stored session value
+        rrp_per_m = resolve_price(item_name) if item_name else (product.get("rrp_per_m", 0.0) or 0.0)
 
         cost_per_m = round(rrp_per_m * COST_FACTOR, 4)
         net_price_per_m = rrp_per_m * (1 - discount_pct / 100)
@@ -668,9 +669,13 @@ for delivery in list(st.session_state.deliveries):
                 key=f"item_{delivery['id']}_{idx}",
             )
             product["item_name"] = selected_item
-            # Resolve and store price
+            # Always resolve price fresh from current region — never rely on cached session value
             resolved_price = resolve_price(selected_item)
             product["rrp_per_m"] = resolved_price
+
+        # Use the freshly resolved price for all display and calculation below
+        current_price = resolve_price(product["item_name"]) if product.get("item_name") else 0.0
+        product["rrp_per_m"] = current_price
 
         with p2:
             product["quantity_m"] = st.number_input(
@@ -682,10 +687,10 @@ for delivery in list(st.session_state.deliveries):
             )
 
         with p3:
-            st.metric("Price/m", f"${product['rrp_per_m']:,.2f}")
+            st.metric("Price/m", f"${current_price:,.2f}")
 
         with p4:
-            st.metric("Cost/m", f"${product['rrp_per_m'] * COST_FACTOR:,.2f}")
+            st.metric("Cost/m", f"${current_price * COST_FACTOR:,.2f}")
 
         with p5:
             product["discount_pct"] = st.selectbox(
@@ -697,7 +702,7 @@ for delivery in list(st.session_state.deliveries):
             )
 
         with p6:
-            net = product["rrp_per_m"] * (1 - product["discount_pct"] / 100)
+            net = current_price * (1 - product["discount_pct"] / 100)
             st.metric("Net/m", f"${net:,.2f}")
             if len(delivery["products"]) > 1:
                 if st.button("✕", key=f"remove_product_{delivery['id']}_{idx}", use_container_width=True):
