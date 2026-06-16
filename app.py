@@ -169,16 +169,23 @@ def safe_divide(a: float, b: float) -> float:
 # Data loaders
 # ---------------------------------------------------------------------------
 
+def _read_spreadsheet(file_bytes: bytes, filename: str) -> pd.DataFrame:
+    """Read xlsx, xls, or csv with the correct engine."""
+    name = filename.lower()
+    if name.endswith(".csv"):
+        return pd.read_csv(io.BytesIO(file_bytes))
+    elif name.endswith(".xls"):
+        return pd.read_excel(io.BytesIO(file_bytes), engine="xlrd")
+    else:  # .xlsx and anything else
+        return pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+
+
 @st.cache_data(show_spinner=False)
 def load_netsuite(file_bytes: bytes, filename: str) -> pd.DataFrame:
     """Load NetSuite price list. Returns df with columns:
     Internal ID, Name, Display Name, Base Price, NSW / ACT, NT, QLD, SA, TAS, VIC, WA, Online Price
     """
-    if filename.endswith(".csv"):
-        df = pd.read_csv(io.BytesIO(file_bytes))
-    else:
-        df = pd.read_excel(io.BytesIO(file_bytes))
-    # normalise column names
+    df = _read_spreadsheet(file_bytes, filename)
     df.columns = [str(c).strip() for c in df.columns]
     return df
 
@@ -189,10 +196,7 @@ def load_competitor(file_bytes: bytes, filename: str) -> pd.DataFrame:
     SubmittedBy, State, SubmissionDate, Atlan Reference, Competitor,
     PipeSize, Length, Price, ApprovedBy, ApprovalDate, Price/m
     """
-    if filename.endswith(".csv"):
-        df = pd.read_csv(io.BytesIO(file_bytes))
-    else:
-        df = pd.read_excel(io.BytesIO(file_bytes))
+    df = _read_spreadsheet(file_bytes, filename)
     df.columns = [str(c).strip() for c in df.columns]
     return df
 
