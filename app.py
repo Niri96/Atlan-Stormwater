@@ -433,60 +433,80 @@ def build_peer_comparison(
     competitor_intel: Dict[str, pd.DataFrame],
     total_revenue: float,
     total_freight: float,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    For each competitor, match each line item to the closest pipe size in their data,
-    multiply that price/m by the line quantity, then sum to get a like-for-like package value.
+    For each competitor, match each Atlan line item to the closest pipe size in competitor data.
+    Uses the average of ALL competitor records at that size (not just one submission).
+    Returns (summary_df, line_df) where line_df shows the per-line breakdown.
     """
+    import re
     total_quantity = detail_df["Quantity m"].sum()
 
-    # Extract numeric pipe size from item name for each line (e.g. "150MM ADS..." -> 150)
+    # Extract pipe size from item name (e.g. "150MM ADS N12..." -> 150)
     def extract_size(item_name: str) -> float:
-        import re
         m = re.search(r"(\d{2,4})", str(item_name))
         return float(m.group(1)) if m else float("nan")
 
     detail_df = detail_df.copy()
     detail_df["_size_mm"] = detail_df["Item"].apply(extract_size)
 
-    rows = []
+    summary_rows = []
+    line_rows = []
+
     for comp_name, comp_df in competitor_intel.items():
         comp_package = 0.0
-        line_details = []
         for _, line in detail_df.iterrows():
             size_mm = line["_size_mm"]
             qty = line["Quantity m"]
-            price = closest_competitor_price(comp_df, size_mm) if not pd.isna(size_mm) else comp_df["price_m"].mean()
-            if price is None:
-                price = 0.0
-            comp_package += price * qty
-            line_details.append(f"{size_mm:.0f}mm @ ${price:.2f}/m")
+            atlan_price_m = line["RRP / m"]
+            atlan_net_m = line["Net Price / m"]
 
-        rows.append(
-            {
-                "Supplier": comp_name,
-                "Matched Lines": len(detail_df),
-                "Est. Product Package": comp_package,
-                "Peer Freight (est.)": total_freight,
-                "Est. Total Package": comp_package + total_freight,
-                "Avg $/m": safe_divide(comp_package, total_quantity),
-                "Size Matches": " | ".join(line_details),
-            }
-        )
+            if pd.isna(size_mm):
+                avg_price, matched_size, n_records = comp_df["price_m"].mean(), float("nan"), len(comp_df)
+            else:
+                avg_price, matched_size, n_records = closest_competitor_price(comp_df, size_mm)
 
-    rows.append(
-        {
-            "Supplier": "Atlan Proposed Package",
-            "Matched Lines": len(detail_df),
-            "Est. Product Package": total_revenue,
+            if avg_price is None or pd.isna(avg_price):
+                avg_price = 0.0
+
+            comp_line_total = avg_price * qty
+            atlan_line_total = atlan_net_m * qty
+            comp_package += comp_line_total
+
+            line_rows.append({
+                "Competitor": comp_name,
+                "Item": line["Item"],
+                "Atlan Size (mm)": size_mm,
+                "Comp. Matched Size (mm)": matched_size,
+                "Records Used": n_records,
+                "Comp. Avg $/m": avg_price,
+                "Atlan Net $/m": atlan_net_m,
+                "$/m Difference": atlan_net_m - avg_price,
+                "Qty m": qty,
+                "Comp. Line Total": comp_line_total,
+                "Atlan Line Total": atlan_line_total,
+                "Line $ Difference": atlan_line_total - comp_line_total,
+            })
+
+        summary_rows.append({
+            "Supplier": comp_name,
+            "Est. Product Package": comp_package,
             "Peer Freight (est.)": total_freight,
-            "Est. Total Package": total_revenue + total_freight,
-            "Avg $/m": safe_divide(total_revenue, total_quantity),
-            "Size Matches": "—",
-        }
-    )
+            "Est. Total Package": comp_package + total_freight,
+            "Avg $/m": safe_divide(comp_package, total_quantity),
+        })
 
-    return pd.DataFrame(rows).sort_values("Est. Total Package").reset_index(drop=True)
+    summary_rows.append({
+        "Supplier": "✦ Atlan Proposed",
+        "Est. Product Package": total_revenue,
+        "Peer Freight (est.)": total_freight,
+        "Est. Total Package": total_revenue + total_freight,
+        "Avg $/m": safe_divide(total_revenue, total_quantity),
+    })
+
+    summary_df = pd.DataFrame(summary_rows).sort_values("Est. Total Package").reset_index(drop=True)
+    line_df = pd.DataFrame(line_rows)
+    return summary_df, line_df
 
 
 # ---------------------------------------------------------------------------
@@ -845,28 +865,29 @@ if competitor_df is not None:
     competitor_intel = get_competitor_prices(competitor_df, region_key)
 
     if competitor_intel:
-        peer_df = build_peer_comparison(detail_df, competitor_intel, total_revenue, total_freight)
+        summary_df, line_df = build_peer_comparison(detail_df, competitor_intel, total_revenue, total_freight)
 
         st.caption(
             f"Competitor prices filtered to {region_key} / {', '.join(COMPETITOR_STATE_MAP.get(region_key, [region_key]))} region. "
-            f"{sum(len(d) for d in competitor_intel.values())} records used."
+            f"{sum(len(d) for d in competitor_intel.values())} records used. "
+            f"Product package = competitor Price/m × Atlan quantity for each matched line."
         )
 
+        # Summary table
         st.dataframe(
-            peer_df.style.format(
+            summary_df.style.format(
                 {
                     "Avg $/m": "${:,.2f}",
                     "Est. Product Package": "${:,.0f}",
                     "Peer Freight (est.)": "${:,.0f}",
                     "Est. Total Package": "${:,.0f}",
-                    "Matched Lines": "{:.0f}",
                 }
             ),
             use_container_width=True,
             hide_index=True,
         )
 
-        comp_packages = peer_df.loc[peer_df["Supplier"] != "Atlan Proposed Package", "Est. Total Package"]
+        comp_packages = summary_df.loc[summary_df["Supplier"] != "✦ Atlan Proposed", "Est. Total Package"]
         if not comp_packages.empty:
             peer_avg = comp_packages.mean()
             gap = safe_divide(total_revenue - peer_avg, peer_avg)
@@ -877,7 +898,25 @@ if competitor_df is not None:
             else:
                 st.info(f"Atlan is broadly market-aligned at {gap:.1%} versus the competitor average.")
 
-        with st.expander("Raw competitor records for this region"):
+        # Line-by-line breakdown
+        if not line_df.empty:
+            with st.expander("Line-by-line competitor breakdown", expanded=False):
+                st.caption("For each Atlan line item, the closest matching pipe size in competitor data is used. Product package = Comp. Avg $/m × Qty m.")
+                fmt = {
+                    "Atlan Size (mm)": "{:.0f}",
+                    "Comp. Matched Size (mm)": "{:.0f}",
+                    "Records Used": "{:.0f}",
+                    "Comp. Avg $/m": "${:,.2f}",
+                    "Atlan Net $/m": "${:,.2f}",
+                    "$/m Difference": "${:,.2f}",
+                    "Qty m": "{:,.0f}",
+                    "Comp. Line Total": "${:,.0f}",
+                    "Atlan Line Total": "${:,.0f}",
+                    "Line $ Difference": "${:,.0f}",
+                }
+                st.dataframe(line_df.style.format(fmt), use_container_width=True, hide_index=True)
+
+        with st.expander("Raw competitor records for this region", expanded=False):
             state_vals = COMPETITOR_STATE_MAP.get(region_key, [region_key])
             st.dataframe(
                 competitor_df[competitor_df["State"].str.strip().isin(state_vals)],
