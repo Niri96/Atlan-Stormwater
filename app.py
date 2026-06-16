@@ -572,24 +572,32 @@ with st.sidebar:
         help="Columns: SubmittedBy, State, Competitor, Price/m, etc.",
     )
 
+    # Store file bytes in session state so they survive reruns (e.g. state change)
+    if netsuite_file:
+        st.session_state["_netsuite_bytes"] = (netsuite_file.read(), netsuite_file.name)
+    if competitor_file:
+        st.session_state["_competitor_bytes"] = (competitor_file.read(), competitor_file.name)
+
     netsuite_df: Optional[pd.DataFrame] = None
     competitor_df: Optional[pd.DataFrame] = None
 
-    if netsuite_file:
+    if "_netsuite_bytes" in st.session_state:
         try:
-            netsuite_df = load_netsuite(netsuite_file.read(), netsuite_file.name)
+            b, name = st.session_state["_netsuite_bytes"]
+            netsuite_df = load_netsuite(b, name)
             st.success(f"✓ NetSuite loaded — {len(netsuite_df):,} items")
         except Exception as e:
             st.error(f"Failed to load NetSuite file: {e}")
 
-    if competitor_file:
+    if "_competitor_bytes" in st.session_state:
         try:
-            competitor_df = load_competitor(competitor_file.read(), competitor_file.name)
+            b, name = st.session_state["_competitor_bytes"]
+            competitor_df = load_competitor(b, name)
             st.success(f"✓ Competitor data loaded — {len(competitor_df):,} records")
         except Exception as e:
             st.error(f"Failed to load competitor file: {e}")
 
-    if not netsuite_file:
+    if not netsuite_file and "_netsuite_bytes" not in st.session_state:
         st.info("Upload NetSuite price list to enable live item lookup. Fallback prices are used until then.")
 
     st.divider()
