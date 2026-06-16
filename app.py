@@ -844,7 +844,7 @@ if competitor_df is not None:
 
         st.caption(
             f"Competitor prices filtered to {region_key} / {', '.join(COMPETITOR_STATE_MAP.get(region_key, [region_key]))} region. "
-            f"{sum(d['entries'] for d in competitor_intel.values())} records used."
+            f"{sum(len(d) for d in competitor_intel.values())} records used."
         )
 
         st.dataframe(
