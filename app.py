@@ -447,12 +447,15 @@ def build_peer_comparison(
     competitor_intel: Dict[str, pd.DataFrame],
     total_revenue: float,
     total_freight: float,
+    peer_freight: Dict[str, float] = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     For each competitor, match each Atlan line item to the closest pipe size in competitor data.
-    Uses the average of ALL competitor records at that size (not just one submission).
-    Returns (summary_df, line_df) where line_df shows the per-line breakdown.
+    Competitor package = their Price × your quantity. Freight is per-competitor (editable).
+    Returns (summary_df, line_df).
     """
+    if peer_freight is None:
+        peer_freight = {}
     import re
     total_quantity = detail_df["Quantity m"].sum()
 
@@ -501,11 +504,12 @@ def build_peer_comparison(
                 "Line $ Diff": atlan_line_total - comp_line_total,
             })
 
+        comp_freight = peer_freight.get(comp_name, total_freight)
         summary_rows.append({
             "Supplier": comp_name,
             "Product Package": comp_package,
-            "Freight": total_freight,
-            "Total Package": comp_package + total_freight,
+            "Freight": comp_freight,
+            "Total Package": comp_package + comp_freight,
             "Avg $/m": safe_divide(comp_package, atlan_qty),
         })
 
@@ -886,12 +890,30 @@ if competitor_df is not None:
     competitor_intel = get_competitor_prices(competitor_df, region_key)
 
     if competitor_intel:
-        summary_df, line_df = build_peer_comparison(detail_df, competitor_intel, total_revenue, total_freight)
+        comp_names = list(competitor_intel.keys())
+
+        with st.expander("Peer Freight Assumptions", expanded=False):
+            st.caption("Competitor freight defaults to Atlan's calculated freight. Edit each manually if known.")
+            peer_freight = {}
+            peer_cols = st.columns(len(comp_names))
+            for col, comp_name in zip(peer_cols, comp_names):
+                with col:
+                    peer_freight[comp_name] = st.number_input(
+                        comp_name,
+                        min_value=0.0,
+                        value=float(total_freight),
+                        step=50.0,
+                        key=f"peer_freight_{comp_name}",
+                    )
+
+        summary_df, line_df = build_peer_comparison(
+            detail_df, competitor_intel, total_revenue, total_freight, peer_freight
+        )
 
         st.caption(
             f"Competitor prices filtered to {region_key} / {', '.join(COMPETITOR_STATE_MAP.get(region_key, [region_key]))} region. "
             f"{sum(len(d) for d in competitor_intel.values())} records used. "
-            f"Product package = competitor Price/m × Atlan quantity for each matched line."
+            f"Product package = competitor Price × your quantity for the closest matching pipe size."
         )
 
         # Summary table
