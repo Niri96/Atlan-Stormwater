@@ -80,21 +80,71 @@ ZONES = {
 
 DISCOUNT_OPTIONS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
 
-# Fallback hardcoded pipe RRP (used when no NetSuite file uploaded)
-FALLBACK_PIPE_RRP = {
-    "225mm": 85,
-    "300mm": 120,
-    "375mm": 165,
-    "450mm": 220,
-    "525mm": 285,
-    "600mm": 360,
-    "750mm": 520,
-    "900mm": 720,
-    "1050mm": 950,
-    "1200mm": 1250,
-}
-
 COST_FACTOR = 0.65  # product cost as fraction of RRP/sell price
+
+
+# ---------------------------------------------------------------------------
+# Built-in price list (ATF product range)
+# ---------------------------------------------------------------------------
+
+_BUILTIN_PRICE_DATA = [
+    {"Internal ID": 8766,  "Name": "ATF1050-CAP",         "Type": "Assembly",        "Display Name": "AtlanFlow 1050mm SN8 Cap Fitting",              "Base Price": None,   "NSW / ACT": 9279,   "NT": 9279,   "QLD": 9279,   "SA": 9279,   "TAS": 9279,   "VIC": 9279,   "WA": 9279},
+    {"Internal ID": 8175,  "Name": "ATF1050.8",            "Type": "Assembly",        "Display Name": "AtlanFlow DN1050 SN8",                          "Base Price": 2091.7, "NSW / ACT": 2099.6, "NT": 2099.6, "QLD": 2091.7, "SA": 2191,   "TAS": 2191,   "VIC": 2091.7, "WA": None},
+    {"Internal ID": 10190, "Name": "ATF1050.8-K",          "Type": "Kit/Package",     "Display Name": "ATF1050.8-K",                                   "Base Price": 1500,   "NSW / ACT": 1600,   "NT": 1576,   "QLD": 1546,   "SA": 2748,   "TAS": 2134,   "VIC": 8787,   "WA": None},
+    {"Internal ID": 9942,  "Name": "ATF1050.8-PERF",       "Type": "Assembly",        "Display Name": "DN1050 SN8 Atlan Flow Perforated",              "Base Price": 199.9,  "NSW / ACT": 157.8,  "NT": 157.8,  "QLD": 199.9,  "SA": 211,    "TAS": 211,    "VIC": 119.9,  "WA": None},
+    {"Internal ID": 8244,  "Name": "ATF1050.GASKET",       "Type": "Inventory Item",  "Display Name": "DN1050 GASKET",                                 "Base Price": 150,    "NSW / ACT": 150,    "NT": 150,    "QLD": 150,    "SA": 150,    "TAS": 150,    "VIC": 150,    "WA": 150},
+    {"Internal ID": 8713,  "Name": "ATF110-45",            "Type": "Assembly",        "Display Name": "AtlanFlow 110mm SN8 45 Degree Fitting",         "Base Price": 309,    "NSW / ACT": 309,    "NT": 309,    "QLD": 309,    "SA": 309,    "TAS": 309,    "VIC": 309,    "WA": 309},
+    {"Internal ID": 8714,  "Name": "ATF110-90",            "Type": "Assembly",        "Display Name": "AtlanFlow 110mm SN8 90 Degree Fitting",         "Base Price": 379,    "NSW / ACT": 379,    "NT": 379,    "QLD": 379,    "SA": 379,    "TAS": 379,    "VIC": 379,    "WA": 379},
+    {"Internal ID": 8092,  "Name": "ATF110.8",             "Type": "Assembly",        "Display Name": "AtlanFlow DN110 SN8",                           "Base Price": 40,     "NSW / ACT": 39,     "NT": 39,     "QLD": 40,     "SA": 40,     "TAS": 40,     "VIC": 40,     "WA": 40},
+    {"Internal ID": 8484,  "Name": "ATF110.8-PERF",        "Type": "Assembly",        "Display Name": "DN110 SN8 Atlan Flow Perforated",               "Base Price": 40,     "NSW / ACT": 39,     "NT": 39,     "QLD": 40,     "SA": 40,     "TAS": 40,     "VIC": 40,     "WA": 40},
+    {"Internal ID": 8362,  "Name": "ATF110.GASKET",        "Type": "Inventory Item",  "Display Name": "DN110 GASKET",                                  "Base Price": 15,     "NSW / ACT": 15,     "NT": 15,     "QLD": 15,     "SA": 15,     "TAS": 15,     "VIC": 15,     "WA": 15},
+    {"Internal ID": 9909,  "Name": "ATF1200.8",            "Type": "Assembly",        "Display Name": "AtlanFlow 1200 SN8",                            "Base Price": None,   "NSW / ACT": None,   "NT": None,   "QLD": None,   "SA": None,   "TAS": None,   "VIC": None,   "WA": None},
+    {"Internal ID": 8718,  "Name": "ATF160-45",            "Type": "Assembly",        "Display Name": "AtlanFlow 160mm SN8 45 Degree Fitting",         "Base Price": 342,    "NSW / ACT": 342,    "NT": 342,    "QLD": 342,    "SA": 342,    "TAS": 342,    "VIC": 342,    "WA": 342},
+    {"Internal ID": 8719,  "Name": "ATF160-90",            "Type": "Assembly",        "Display Name": "AtlanFlow 160mm SN8 90 Degree Fitting",         "Base Price": 432,    "NSW / ACT": 432,    "NT": 432,    "QLD": 432,    "SA": 432,    "TAS": 432,    "VIC": 432,    "WA": 432},
+    {"Internal ID": 8098,  "Name": "ATF160.8",             "Type": "Assembly",        "Display Name": "AtlanFlow DN160 SN8",                           "Base Price": 73,     "NSW / ACT": 45.8,   "NT": 45.8,   "QLD": 73,     "SA": 70,     "TAS": 70,     "VIC": 73,     "WA": 73},
+    {"Internal ID": 8483,  "Name": "ATF160.8-PERF",        "Type": "Assembly",        "Display Name": "DN160 SN8 Atlan Flow Perforated",               "Base Price": 73,     "NSW / ACT": 45.8,   "NT": 45.8,   "QLD": 73,     "SA": 70,     "TAS": 70,     "VIC": 73,     "WA": 73},
+    {"Internal ID": 8321,  "Name": "ATF160.GASKET",        "Type": "Inventory Item",  "Display Name": "DN160 GASKET",                                  "Base Price": 20,     "NSW / ACT": 20,     "NT": 20,     "QLD": 20,     "SA": 20,     "TAS": 20,     "VIC": 20,     "WA": 20},
+    {"Internal ID": 8723,  "Name": "ATF225-45",            "Type": "Assembly",        "Display Name": "AtlanFlow 225mm SN8 45 Degree Fitting",         "Base Price": 454,    "NSW / ACT": 454,    "NT": 454,    "QLD": 454,    "SA": 454,    "TAS": 454,    "VIC": 454,    "WA": 454},
+    {"Internal ID": 8724,  "Name": "ATF225-90",            "Type": "Assembly",        "Display Name": "AtlanFlow 225mm SN8 90 Degree Fitting",         "Base Price": 554,    "NSW / ACT": 554,    "NT": 554,    "QLD": 554,    "SA": 554,    "TAS": 554,    "VIC": 554,    "WA": 554},
+    {"Internal ID": 7943,  "Name": "ATF225.8",             "Type": "Assembly",        "Display Name": "AtlanFlow DN225 SN8",                           "Base Price": 109.8,  "NSW / ACT": 99.5,   "NT": 99.5,   "QLD": 109.8,  "SA": 138,    "TAS": 138,    "VIC": 109.8,  "WA": 109.8},
+    {"Internal ID": 9170,  "Name": "ATF225.8-PERF",        "Type": "Assembly",        "Display Name": "DN225 SN8 Atlan Flow Perforated",               "Base Price": 109.8,  "NSW / ACT": 99.5,   "NT": 99.5,   "QLD": 109.8,  "SA": 138,    "TAS": 138,    "VIC": 109.8,  "WA": 109.8},
+    {"Internal ID": 8245,  "Name": "ATF225.GASKET",        "Type": "Inventory Item",  "Display Name": "DN225 GASKET",                                  "Base Price": 25,     "NSW / ACT": 25,     "NT": 25,     "QLD": 25,     "SA": 25,     "TAS": 25,     "VIC": 25,     "WA": 25},
+    {"Internal ID": 8728,  "Name": "ATF300-45",            "Type": "Assembly",        "Display Name": "AtlanFlow 300mm SN8 45 Degree Fitting",         "Base Price": 619,    "NSW / ACT": 619,    "NT": 619,    "QLD": 619,    "SA": 619,    "TAS": 619,    "VIC": 619,    "WA": 619},
+    {"Internal ID": 8729,  "Name": "ATF300-90",            "Type": "Assembly",        "Display Name": "AtlanFlow 300mm SN8 90 Degree Fitting",         "Base Price": 782,    "NSW / ACT": 782,    "NT": 782,    "QLD": 782,    "SA": 782,    "TAS": 782,    "VIC": 782,    "WA": 782},
+    {"Internal ID": 7969,  "Name": "ATF300.8",             "Type": "Assembly",        "Display Name": "AtlanFlow DN300 SN8",                           "Base Price": 199.9,  "NSW / ACT": 157.8,  "NT": 157.8,  "QLD": 199.9,  "SA": 211,    "TAS": 211,    "VIC": 199.9,  "WA": 199.9},
+    {"Internal ID": 8546,  "Name": "ATF300.8-PERF",        "Type": "Assembly",        "Display Name": "DN300 SN8 Atlan Flow Perforated",               "Base Price": 199.9,  "NSW / ACT": 157.8,  "NT": 157.8,  "QLD": 199.9,  "SA": 211,    "TAS": 211,    "VIC": 119.9,  "WA": 199.9},
+    {"Internal ID": 7994,  "Name": "ATF300.GASKET",        "Type": "Inventory Item",  "Display Name": "DN300 GASKET",                                  "Base Price": 30,     "NSW / ACT": 30,     "NT": 30,     "QLD": 30,     "SA": 30,     "TAS": 30,     "VIC": 30,     "WA": 30},
+    {"Internal ID": 8733,  "Name": "ATF375-45",            "Type": "Assembly",        "Display Name": "AtlanFlow 375mm SN8 45 Degree Fitting",         "Base Price": 829,    "NSW / ACT": 829,    "NT": 829,    "QLD": 829,    "SA": 829,    "TAS": 829,    "VIC": 829,    "WA": 829},
+    {"Internal ID": 8734,  "Name": "ATF375-90",            "Type": "Assembly",        "Display Name": "AtlanFlow 375mm SN8 90 Degree Fitting",         "Base Price": 1049,   "NSW / ACT": 1049,   "NT": 1049,   "QLD": 1049,   "SA": 1049,   "TAS": 1049,   "VIC": 1049,   "WA": 1049},
+    {"Internal ID": 8017,  "Name": "ATF375.8",             "Type": "Assembly",        "Display Name": "AtlanFlow DN375 SN8",                           "Base Price": 317.8,  "NSW / ACT": 231.6,  "NT": 231.6,  "QLD": 317.8,  "SA": 345,    "TAS": 345,    "VIC": 317.8,  "WA": 317.8},
+    {"Internal ID": 9175,  "Name": "ATF375.8-PERF",        "Type": "Assembly",        "Display Name": "DN375 SN8 Atlan Flow Perforated",               "Base Price": 317.8,  "NSW / ACT": 231.6,  "NT": 231.6,  "QLD": 317.8,  "SA": 345,    "TAS": 345,    "VIC": 317.8,  "WA": 317.8},
+    {"Internal ID": 8238,  "Name": "ATF375.GASKET",        "Type": "Inventory Item",  "Display Name": "DN375 GASKET",                                  "Base Price": 35,     "NSW / ACT": 35,     "NT": 35,     "QLD": 35,     "SA": 35,     "TAS": 35,     "VIC": 35,     "WA": 35},
+    {"Internal ID": 8738,  "Name": "ATF450-45",            "Type": "Assembly",        "Display Name": "AtlanFlow 450mm SN8 45 Degree Fitting",         "Base Price": 1151,   "NSW / ACT": 1151,   "NT": 1151,   "QLD": 1151,   "SA": 1151,   "TAS": 1151,   "VIC": 1151,   "WA": 1151},
+    {"Internal ID": 8739,  "Name": "ATF450-90",            "Type": "Assembly",        "Display Name": "AtlanFlow 450mm SN8 90 Degree Fitting",         "Base Price": 1401,   "NSW / ACT": 1401,   "NT": 1401,   "QLD": 1401,   "SA": 1401,   "TAS": 1401,   "VIC": 1401,   "WA": 1401},
+    {"Internal ID": 8024,  "Name": "ATF450.8",             "Type": "Assembly",        "Display Name": "AtlanFlow DN450 SN8",                           "Base Price": 411.4,  "NSW / ACT": 377.1,  "NT": 377.1,  "QLD": 411.4,  "SA": 485,    "TAS": 485,    "VIC": 411.4,  "WA": 411.4},
+    {"Internal ID": 9171,  "Name": "ATF450.8-PERF",        "Type": "Assembly",        "Display Name": "DN450 SN8 Atlan Flow Perforated",               "Base Price": 411.4,  "NSW / ACT": 377.1,  "NT": 377.1,  "QLD": 411.4,  "SA": 485,    "TAS": 485,    "VIC": 411.4,  "WA": 411.4},
+    {"Internal ID": 8239,  "Name": "ATF450.GASKET",        "Type": "Inventory Item",  "Display Name": "DN450 GASKET",                                  "Base Price": 40,     "NSW / ACT": 40,     "NT": 40,     "QLD": 40,     "SA": 40,     "TAS": 40,     "VIC": 40,     "WA": 40},
+    {"Internal ID": 8743,  "Name": "ATF525-45",            "Type": "Assembly",        "Display Name": "AtlanFlow 525mm SN8 45 Degree Fitting",         "Base Price": 1478,   "NSW / ACT": 1478,   "NT": 1478,   "QLD": 1478,   "SA": 1478,   "TAS": 1478,   "VIC": 1478,   "WA": 1478},
+    {"Internal ID": 8744,  "Name": "ATF525-90",            "Type": "Assembly",        "Display Name": "AtlanFlow 525mm SN8 90 Degree Fitting",         "Base Price": 1750,   "NSW / ACT": 1750,   "NT": 1750,   "QLD": 1750,   "SA": 1750,   "TAS": 1750,   "VIC": 1750,   "WA": 1750},
+    {"Internal ID": 8103,  "Name": "ATF525.8",             "Type": "Assembly",        "Display Name": "AtlanFlow DN525 SN8",                           "Base Price": 527,    "NSW / ACT": 477.1,  "NT": 477.1,  "QLD": 527,    "SA": 648,    "TAS": 648,    "VIC": 527,    "WA": 527},
+    {"Internal ID": 9172,  "Name": "ATF525.8-PERF",        "Type": "Assembly",        "Display Name": "DN525 SN8 Atlan Flow Perforated",               "Base Price": 527,    "NSW / ACT": 477.1,  "NT": 477.1,  "QLD": 527,    "SA": 648,    "TAS": 648,    "VIC": 527,    "WA": 527},
+    {"Internal ID": 8240,  "Name": "ATF525.GASKET",        "Type": "Inventory Item",  "Display Name": "DN525 GASKET",                                  "Base Price": 45,     "NSW / ACT": 45,     "NT": 45,     "QLD": 45,     "SA": 45,     "TAS": 45,     "VIC": 45,     "WA": 45},
+    {"Internal ID": 8074,  "Name": "ATF600.8",             "Type": "Assembly",        "Display Name": "AtlanFlow DN600 SN8",                           "Base Price": 773.1,  "NSW / ACT": 692.2,  "NT": 692.2,  "QLD": 773.1,  "SA": 820,    "TAS": 820,    "VIC": 773.1,  "WA": 773.1},
+    {"Internal ID": 9173,  "Name": "ATF600.8-PERF",        "Type": "Assembly",        "Display Name": "DN600 SN8 Atlan Flow Perforated",               "Base Price": 773.1,  "NSW / ACT": 692.2,  "NT": 692.2,  "QLD": 773.1,  "SA": 820,    "TAS": 820,    "VIC": 773.1,  "WA": 773.1},
+    {"Internal ID": 8241,  "Name": "ATF600.GASKET",        "Type": "Inventory Item",  "Display Name": "DN600 GASKET",                                  "Base Price": 50,     "NSW / ACT": 50,     "NT": 50,     "QLD": 50,     "SA": 50,     "TAS": 50,     "VIC": 50,     "WA": 50},
+    {"Internal ID": 8193,  "Name": "ATF750.8",             "Type": "Assembly",        "Display Name": "AtlanFlow DN750 SN8",                           "Base Price": 1012.3, "NSW / ACT": 1098.1, "NT": 1098.1, "QLD": 1012.3, "SA": 1182,   "TAS": 1182,   "VIC": 1012.3, "WA": 1012.3},
+    {"Internal ID": 9174,  "Name": "ATF750.8-PERF",        "Type": "Assembly",        "Display Name": "DN750 SN8 Atlan Flow Perforated",               "Base Price": 1012.3, "NSW / ACT": 1098.1, "NT": 1098.1, "QLD": 1012.3, "SA": 1182,   "TAS": 1182,   "VIC": 1012.3, "WA": 1012.3},
+    {"Internal ID": 8242,  "Name": "ATF750.GASKET",        "Type": "Inventory Item",  "Display Name": "DN750 GASKET",                                  "Base Price": 85,     "NSW / ACT": 85,     "NT": 85,     "QLD": 85,     "SA": 85,     "TAS": 85,     "VIC": 85,     "WA": 85},
+    {"Internal ID": 8154,  "Name": "ATF900.8",             "Type": "Assembly",        "Display Name": "AtlanFlow DN900 SN8",                           "Base Price": 1201.9, "NSW / ACT": 1629.8, "NT": 1629.8, "QLD": 1201.9, "SA": 1493,   "TAS": 1493,   "VIC": 1201.9, "WA": 1201.9},
+    {"Internal ID": 8243,  "Name": "ATF900.GASKET",        "Type": "Inventory Item",  "Display Name": "DN900 GASKET",                                  "Base Price": 95,     "NSW / ACT": 95,     "NT": 95,     "QLD": 95,     "SA": 95,     "TAS": 95,     "VIC": 95,     "WA": 95},
+    {"Internal ID": 8331,  "Name": "ATFJ100-225/300",      "Type": "Inventory Item",  "Display Name": "DN100 Joiner to 225/300 SN8 Atlan Flow",        "Base Price": 45,     "NSW / ACT": 45,     "NT": 45,     "QLD": 45,     "SA": 45,     "TAS": 45,     "VIC": 45,     "WA": 45},
+    {"Internal ID": 8333,  "Name": "ATFJ100-375/450/525",  "Type": "Inventory Item",  "Display Name": "DN100 Joiner to 375/450/525 SN8 Atlan Flow",    "Base Price": 52,     "NSW / ACT": 52,     "NT": 52,     "QLD": 52,     "SA": 52,     "TAS": 52,     "VIC": 52,     "WA": 52},
+    {"Internal ID": 8334,  "Name": "ATFJ150-300/375",      "Type": "Inventory Item",  "Display Name": "DN150 Joiner to 300/375 SN8 Atlan Flow",        "Base Price": 95,     "NSW / ACT": 95,     "NT": 95,     "QLD": 95,     "SA": 95,     "TAS": 95,     "VIC": 95,     "WA": 95},
+    {"Internal ID": 8336,  "Name": "ATFJ150-375/450/525",  "Type": "Inventory Item",  "Display Name": "DN150 Joiner to 375/450/525 SN8 Atlan Flow",    "Base Price": 132,    "NSW / ACT": 132,    "NT": 132,    "QLD": 132,    "SA": 132,    "TAS": 132,    "VIC": 132,    "WA": 132},
+    {"Internal ID": 8335,  "Name": "ATFJ150-600/750/900",  "Type": "Inventory Item",  "Display Name": "DN150 Joiner to 600/750/900 SN8 Atlan Flow",    "Base Price": 145,    "NSW / ACT": 145,    "NT": 145,     "QLD": 145,    "SA": 145,    "TAS": 145,    "VIC": 145,    "WA": 145},
+]
+
+BUILTIN_NETSUITE_DF = pd.DataFrame(_BUILTIN_PRICE_DATA)
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +224,6 @@ def _read_spreadsheet(file_bytes: bytes, filename: str) -> pd.DataFrame:
     name = filename.lower()
     if name.endswith(".csv"):
         return pd.read_csv(io.BytesIO(file_bytes))
-    # Detect if file is actually XML content (NetSuite exports .xls as XML)
     sniff = file_bytes[:200].lstrip()
     is_xml = sniff.startswith(b"<?xml") or sniff.startswith(b"<html") or b"<Workbook" in sniff
     if is_xml:
@@ -187,9 +236,6 @@ def _read_spreadsheet(file_bytes: bytes, filename: str) -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def load_netsuite(file_bytes: bytes, filename: str) -> pd.DataFrame:
-    """Load NetSuite price list. Returns df with columns:
-    Internal ID, Name, Display Name, Base Price, NSW / ACT, NT, QLD, SA, TAS, VIC, WA, Online Price
-    """
     df = _read_spreadsheet(file_bytes, filename)
     df.columns = [str(c).strip() for c in df.columns]
     return df
@@ -197,25 +243,18 @@ def load_netsuite(file_bytes: bytes, filename: str) -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def load_competitor(file_bytes: bytes, filename: str) -> pd.DataFrame:
-    """Load Competitor Intelligence. Returns df with columns:
-    SubmittedBy, State, SubmissionDate, Atlan Reference, Competitor,
-    PipeSize, Length, Price, ApprovedBy, ApprovalDate, Price/m
-    """
     df = _read_spreadsheet(file_bytes, filename)
     df.columns = [str(c).strip() for c in df.columns]
     return df
 
 
 def get_item_price(netsuite_df: pd.DataFrame, item_name: str, region_key: str) -> Optional[float]:
-    """Look up price for item_name in the given region. Returns None if not found."""
     col = STATE_TO_NETSUITE_COL.get(region_key)
     if col is None or col not in netsuite_df.columns:
-        # fall back to Base Price
         col = "Base Price"
     if col not in netsuite_df.columns:
         return None
 
-    # match on Display Name or Name
     mask = (
         netsuite_df.get("Display Name", pd.Series(dtype=str)).str.strip().str.lower() == item_name.strip().lower()
     ) | (
@@ -227,22 +266,20 @@ def get_item_price(netsuite_df: pd.DataFrame, item_name: str, region_key: str) -
 
     val = rows.iloc[0][col]
     try:
-        return float(val)
+        v = float(val)
+        if pd.isna(v):
+            raise ValueError
+        return v
     except (ValueError, TypeError):
-        # try Base Price fallback
         try:
-            return float(rows.iloc[0].get("Base Price", None))
+            base = rows.iloc[0].get("Base Price", None)
+            v = float(base)
+            return None if pd.isna(v) else v
         except (ValueError, TypeError):
             return None
 
 
 def get_competitor_prices(competitor_df: pd.DataFrame, region_key: str) -> Dict[str, pd.DataFrame]:
-    """
-    Returns dict: {competitor_name: DataFrame with columns [pipe_size_mm, price]}
-    pipe_size_mm extracted from Atlan Reference (ATF225 -> 225) or PipeSize column.
-    Uses the Price column (total price per submission, NOT Price/m).
-    Filtered to region.
-    """
     import re
     state_vals = COMPETITOR_STATE_MAP.get(region_key, [region_key])
     mask = competitor_df["State"].str.strip().isin(state_vals)
@@ -251,10 +288,8 @@ def get_competitor_prices(competitor_df: pd.DataFrame, region_key: str) -> Dict[
     if subset.empty:
         return {}
 
-    # Use the Price column (total price, not per-metre)
     subset["price"] = pd.to_numeric(subset.get("Price", pd.Series(dtype=float)), errors="coerce")
 
-    # Extract pipe size from Atlan Reference first (ATF225 -> 225), then PipeSize column
     def size_from_ref(val: str) -> float:
         m = re.search(r"ATF(\d{2,4})", str(val).upper())
         if m:
@@ -283,14 +318,8 @@ def get_competitor_prices(competitor_df: pd.DataFrame, region_key: str) -> Dict[
 
 
 def closest_competitor_price(comp_df: pd.DataFrame, target_size_mm: float) -> tuple[float, float]:
-    """
-    Find the row with pipe_size_mm closest to target_size_mm.
-    Returns (price, matched_size_mm).
-    The caller multiplies price × quantity.
-    """
     sized = comp_df.dropna(subset=["pipe_size_mm"])
     if sized.empty:
-        # No size data — use first available price
         return float(comp_df["price"].iloc[0]), float("nan")
     closest_idx = (sized["pipe_size_mm"] - target_size_mm).abs().idxmin()
     row = sized.loc[closest_idx]
@@ -388,7 +417,6 @@ def calculate_delivery(delivery: dict, global_inputs: dict, region_key: str) -> 
         item_name = product.get("item_name", "")
         quantity_m = product["quantity_m"]
         discount_pct = product["discount_pct"]
-        # Always re-resolve price from current region — never trust the stored session value
         rrp_per_m = resolve_price(item_name) if item_name else (product.get("rrp_per_m", 0.0) or 0.0)
 
         cost_per_m = round(rrp_per_m * COST_FACTOR, 4)
@@ -449,17 +477,11 @@ def build_peer_comparison(
     total_freight: float,
     peer_freight: Dict[str, float] = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    For each competitor, match each Atlan line item to the closest pipe size in competitor data.
-    Competitor package = their Price × your quantity. Freight is per-competitor (editable).
-    Returns (summary_df, line_df).
-    """
     if peer_freight is None:
         peer_freight = {}
     import re
     total_quantity = detail_df["Quantity m"].sum()
 
-    # Extract pipe size from item name (e.g. "150MM ADS N12..." -> 150)
     def extract_size(item_name: str) -> float:
         m = re.search(r"(\d{2,4})", str(item_name))
         return float(m.group(1)) if m else float("nan")
@@ -467,7 +489,6 @@ def build_peer_comparison(
     detail_df = detail_df.copy()
     detail_df["_size_mm"] = detail_df["Item"].apply(extract_size)
 
-    # Atlan package = Net Price/m (after discount) × quantity per line
     atlan_package = sum(line["Net Price / m"] * line["Quantity m"] for _, line in detail_df.iterrows())
     atlan_qty = detail_df["Quantity m"].sum()
 
@@ -487,7 +508,6 @@ def build_peer_comparison(
                 comp_price = 0.0
                 matched_size = float("nan")
 
-            # Competitor package = their Price column × your quantity
             comp_line_total = comp_price * qty
             comp_package += comp_line_total
 
@@ -564,10 +584,10 @@ with st.sidebar:
     st.markdown("### Data Sources")
 
     netsuite_file = st.file_uploader(
-        "NetSuite Price List (.xlsx / .csv)",
+        "NetSuite Price List — optional override (.xlsx / .csv)",
         type=["xlsx", "xls", "csv"],
         key="netsuite_upload",
-        help="Export from NetSuite. Needs columns: Name or Display Name, Base Price, VIC, NSW / ACT, QLD, etc.",
+        help="Upload a fresh NetSuite export to override the built-in ATF price list. Same column format required.",
     )
     competitor_file = st.file_uploader(
         "Competitor Intelligence (.xlsx / .csv)",
@@ -576,22 +596,28 @@ with st.sidebar:
         help="Columns: SubmittedBy, State, Competitor, Price/m, etc.",
     )
 
-    # Store file bytes in session state so they survive reruns (e.g. state change)
     if netsuite_file:
         st.session_state["_netsuite_bytes"] = (netsuite_file.read(), netsuite_file.name)
     if competitor_file:
         st.session_state["_competitor_bytes"] = (competitor_file.read(), competitor_file.name)
 
+    # Resolve which NetSuite df to use
     netsuite_df: Optional[pd.DataFrame] = None
     competitor_df: Optional[pd.DataFrame] = None
+    netsuite_source = "built-in ATF price list"
 
     if "_netsuite_bytes" in st.session_state:
         try:
             b, name = st.session_state["_netsuite_bytes"]
             netsuite_df = load_netsuite(b, name)
-            st.success(f"✓ NetSuite loaded — {len(netsuite_df):,} items")
+            netsuite_source = f"uploaded file ({name})"
+            st.success(f"✓ NetSuite override loaded — {len(netsuite_df):,} items")
         except Exception as e:
             st.error(f"Failed to load NetSuite file: {e}")
+            netsuite_df = BUILTIN_NETSUITE_DF
+    else:
+        netsuite_df = BUILTIN_NETSUITE_DF
+        st.info(f"✓ Using built-in ATF price list ({len(netsuite_df):,} items). Upload a file above to override.")
 
     if "_competitor_bytes" in st.session_state:
         try:
@@ -600,9 +626,6 @@ with st.sidebar:
             st.success(f"✓ Competitor data loaded — {len(competitor_df):,} records")
         except Exception as e:
             st.error(f"Failed to load competitor file: {e}")
-
-    if not netsuite_file and "_netsuite_bytes" not in st.session_state:
-        st.info("Upload NetSuite price list to enable live item lookup. Fallback prices are used until then.")
 
     st.divider()
 
@@ -635,32 +658,23 @@ global_inputs = {"driver_rate": driver_rate, "diesel_price": diesel_price, "avg_
 # Build item options for selectors
 # ---------------------------------------------------------------------------
 
-if netsuite_df is not None:
-    price_col = STATE_TO_NETSUITE_COL.get(region_key, "Base Price")
-    if price_col not in netsuite_df.columns:
-        price_col = "Base Price"
+price_col = STATE_TO_NETSUITE_COL.get(region_key, "Base Price")
+if price_col not in netsuite_df.columns:
+    price_col = "Base Price"
 
-    # Only show items that have a price in this state (or Base Price)
-    name_col = "Display Name" if "Display Name" in netsuite_df.columns else "Name"
-    price_series = pd.to_numeric(netsuite_df.get(price_col, netsuite_df.get("Base Price")), errors="coerce")
-    base_series = pd.to_numeric(netsuite_df.get("Base Price", pd.Series(dtype=float)), errors="coerce")
-    effective_price = price_series.combine_first(base_series)
+name_col = "Display Name" if "Display Name" in netsuite_df.columns else "Name"
+price_series = pd.to_numeric(netsuite_df.get(price_col, netsuite_df.get("Base Price", pd.Series(dtype=float))), errors="coerce")
+base_series = pd.to_numeric(netsuite_df.get("Base Price", pd.Series(dtype=float)), errors="coerce")
+effective_price = price_series.combine_first(base_series)
 
-    item_mask = effective_price.notna() & (effective_price > 0)
-    item_names = netsuite_df.loc[item_mask, name_col].dropna().str.strip().sort_values().tolist()
-else:
-    # Fall back to simple pipe sizes
-    item_names = list(FALLBACK_PIPE_RRP.keys())
+item_mask = effective_price.notna() & (effective_price > 0)
+item_names = netsuite_df.loc[item_mask, name_col].dropna().str.strip().sort_values().tolist()
 
 
 def resolve_price(item_name: str) -> float:
     """Return sell price per metre for item_name in current region."""
-    if netsuite_df is not None:
-        p = get_item_price(netsuite_df, item_name, region_key)
-        if p is not None:
-            return p
-    # fallback
-    return FALLBACK_PIPE_RRP.get(item_name, 0.0)
+    p = get_item_price(netsuite_df, item_name, region_key)
+    return p if p is not None else 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -671,7 +685,7 @@ top_left, top_right = st.columns([0.78, 0.22])
 with top_left:
     st.markdown("### Package Builder")
     st.caption(
-        f"Prices loaded from {'NetSuite (' + STATE_TO_NETSUITE_COL.get(region_key,'Base Price') + ' column)' if netsuite_df is not None else 'fallback defaults'}. "
+        f"Prices from {netsuite_source} — {STATE_TO_NETSUITE_COL.get(region_key, 'Base Price')} column. "
         "Each delivery can include multiple items. Freight is allocated across products."
     )
 with top_right:
@@ -714,11 +728,9 @@ for delivery in list(st.session_state.deliveries):
                 key=f"item_{delivery['id']}_{idx}",
             )
             product["item_name"] = selected_item
-            # Always resolve price fresh from current region — never rely on cached session value
             resolved_price = resolve_price(selected_item)
             product["rrp_per_m"] = resolved_price
 
-        # Use the freshly resolved price for all display and calculation below
         current_price = resolve_price(product["item_name"]) if product.get("item_name") else 0.0
         product["rrp_per_m"] = current_price
 
@@ -916,7 +928,6 @@ if competitor_df is not None:
             f"Product package = competitor Price × your quantity for the closest matching pipe size."
         )
 
-        # Summary table
         st.dataframe(
             summary_df.style.format(
                 {
@@ -941,10 +952,9 @@ if competitor_df is not None:
             else:
                 st.info(f"Atlan is broadly market-aligned at {gap:.1%} versus the competitor average.")
 
-        # Line-by-line breakdown
         if not line_df.empty:
             with st.expander("Line-by-line competitor breakdown", expanded=False):
-                st.caption("For each Atlan line item, the closest matching pipe size in competitor data is used. Product package = Comp. Avg $/m × Qty m.")
+                st.caption("For each Atlan line item, the closest matching pipe size in competitor data is used.")
                 fmt = {
                     "Atlan Size (mm)": "{:.0f}",
                     "Comp. Matched Size (mm)": "{:.0f}",
