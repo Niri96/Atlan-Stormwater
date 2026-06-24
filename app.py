@@ -1,11 +1,22 @@
 from __future__ import annotations
 
 import io
+import requests
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 import pandas as pd
 import streamlit as st
+
+# ---------------------------------------------------------------------------
+# SharePoint auto-load URL
+# Swap ?e=... for ?download=1 to get a direct download link.
+# If the file is behind Atlan SSO this will fall back to manual upload.
+# ---------------------------------------------------------------------------
+COMPETITOR_SHAREPOINT_URL = (
+    "https://atlanstormwater.sharepoint.com/:x:/s/Atlan-Stormwater/SP/MFR/"
+    "IQDJg3lu2-FsQJSd4zop7isvAeCBUaoExJKwlJKcfc9ocOY?download=1"
+)
 
 st.set_page_config(page_title="Atlan Pricing Engine", page_icon="💧", layout="wide")
 
@@ -246,6 +257,34 @@ def load_competitor(file_bytes: bytes, filename: str) -> pd.DataFrame:
     df = _read_spreadsheet(file_bytes, filename)
     df.columns = [str(c).strip() for c in df.columns]
     return df
+
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def load_competitor_from_sharepoint() -> "tuple[Optional[pd.DataFrame], str]":
+    """Auto-download Competitor Intelligence from SharePoint. Refreshes hourly."""
+    try:
+        resp = requests.get(COMPETITOR_SHAREPOINT_URL, timeout=15)
+        if resp.status_code == 200 and len(resp.content) > 1000:
+            file_bytes = resp.content
+            try:
+                df = pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+            except Exception:
+                try:
+                    df = pd.read_excel(io.BytesIO(file_bytes), engine="xlrd")
+                except Exception:
+                    tables = pd.read_html(io.BytesIO(file_bytes), header=0)
+                    df = tables[0]
+            df.columns = [str(c).strip() for c in df.columns]
+            return df, f"✓ Competitor data auto-loaded from SharePoint — {len(df):,} records"
+        elif resp.status_code in (401, 403):
+            return None, "SharePoint file requires Atlan login — upload manually below."
+        else:
+            return None, f"SharePoint returned status {resp.status_code} — upload manually below."
+    except requests.exceptions.Timeout:
+        return None, "SharePoint request timed out — upload manually below."
+    except Exception as e:
+        return None, f"Could not reach SharePoint ({e!s}) — upload manually below."
 
 
 def get_item_price(netsuite_df: pd.DataFrame, item_name: str, region_key: str) -> Optional[float]:
@@ -589,17 +628,8 @@ with st.sidebar:
         key="netsuite_upload",
         help="Upload a fresh NetSuite export to override the built-in ATF price list. Same column format required.",
     )
-    competitor_file = st.file_uploader(
-        "Competitor Intelligence (.xlsx / .csv)",
-        type=["xlsx", "xls", "csv"],
-        key="competitor_upload",
-        help="Columns: SubmittedBy, State, Competitor, Price/m, etc.",
-    )
-
     if netsuite_file:
         st.session_state["_netsuite_bytes"] = (netsuite_file.read(), netsuite_file.name)
-    if competitor_file:
-        st.session_state["_competitor_bytes"] = (competitor_file.read(), competitor_file.name)
 
     # Resolve which NetSuite df to use
     netsuite_df: Optional[pd.DataFrame] = None
@@ -619,11 +649,27 @@ with st.sidebar:
         netsuite_df = BUILTIN_NETSUITE_DF
         st.info(f"✓ Using built-in ATF price list ({len(netsuite_df):,} items). Upload a file above to override.")
 
-    if "_competitor_bytes" in st.session_state:
+    # --- Competitor Intelligence: auto-load from SharePoint, fallback to manual upload ---
+    st.markdown("**Competitor Intelligence**")
+    sp_df, sp_msg = load_competitor_from_sharepoint()
+    if sp_df is not None:
+        competitor_df = sp_df
+        st.success(sp_msg)
+        st.caption("Refreshes automatically every hour. Upload below to override.")
+    else:
+        st.warning(sp_msg)
+
+    competitor_file = st.file_uploader(
+        "Manual override — Competitor Intelligence (.xlsx / .csv)",
+        type=["xlsx", "xls", "csv"],
+        key="competitor_upload",
+        help="Only needed if SharePoint auto-load fails. Columns: SubmittedBy, State, Competitor, Price/m, etc.",
+    )
+    if competitor_file:
         try:
-            b, name = st.session_state["_competitor_bytes"]
-            competitor_df = load_competitor(b, name)
-            st.success(f"✓ Competitor data loaded — {len(competitor_df):,} records")
+            b = competitor_file.read()
+            competitor_df = load_competitor(b, competitor_file.name)
+            st.success(f"✓ Manual upload loaded — {len(competitor_df):,} records (overrides SharePoint)")
         except Exception as e:
             st.error(f"Failed to load competitor file: {e}")
 
