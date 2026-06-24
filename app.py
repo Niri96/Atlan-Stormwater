@@ -260,9 +260,9 @@ def load_competitor(file_bytes: bytes, filename: str) -> pd.DataFrame:
 
 
 
-@st.cache_data(show_spinner=False, ttl=3600)
+@st.cache_data(show_spinner=False, ttl=0)
 def load_competitor_from_sharepoint() -> "tuple[Optional[pd.DataFrame], str]":
-    """Auto-download Competitor Intelligence from SharePoint. Refreshes hourly."""
+    """Auto-download Competitor Intelligence from SharePoint. Fetches fresh on every page load."""
     try:
         resp = requests.get(COMPETITOR_SHAREPOINT_URL, timeout=15)
         if resp.status_code == 200 and len(resp.content) > 1000:
@@ -655,7 +655,7 @@ with st.sidebar:
     if sp_df is not None:
         competitor_df = sp_df
         st.success(sp_msg)
-        st.caption("Refreshes automatically every hour. Upload below to override.")
+        st.caption("Fetches the latest data from SharePoint on every page load. Upload below to override.")
     else:
         st.warning(sp_msg)
 
