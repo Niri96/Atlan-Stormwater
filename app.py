@@ -1,30 +1,32 @@
 from __future__ import annotations
 
 import io
-import requests
+import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 import pandas as pd
+import requests
 import streamlit as st
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 
 # ---------------------------------------------------------------------------
 # SharePoint auto-load URL
-# Swap ?e=... for ?download=1 to get a direct download link.
-# If the file is behind Atlan SSO this will fall back to manual upload.
+# Converted from the share link to a direct-download link by appending
+# &download=1. If the file is behind Atlan SSO this will fall back to
+# manual upload automatically.
 # ---------------------------------------------------------------------------
 COMPETITOR_SHAREPOINT_URL = (
-    "https://atlanstormwater.sharepoint.com/:x:/s/Atlan-Stormwater/SP/MFR/"
-    "IQDJg3lu2-FsQJSd4zop7isvAeCBUaoExJKwlJKcfc9ocOY?download=1"
+    "https://atlanstormwater.sharepoint.com/:x:/s/CIA/"
+    "IQASFO4gDYM5T4hmHT4y1q3HARdKM1KOlS9IlW3sY_43GCM?e=zd7jF1&download=1"
 )
 
 st.set_page_config(page_title="Atlan Pricing Engine", page_icon="💧", layout="wide")
 
-
 # ---------------------------------------------------------------------------
 # Static data
 # ---------------------------------------------------------------------------
-
 @dataclass(frozen=True)
 class Region:
     name: str
@@ -40,7 +42,7 @@ class Fleet:
     maintenance_per_km: float
 
 
-# State → column name mapping for NetSuite price list
+# State -> column name mapping for NetSuite price list
 STATE_TO_NETSUITE_COL = {
     "VIC": "VIC",
     "NSW": "NSW / ACT",
@@ -51,7 +53,8 @@ STATE_TO_NETSUITE_COL = {
     "NT": "NT",
 }
 
-# Competitor Intelligence: regions map to State column values
+# Competitor Intelligence: regions map to the combined State choice values
+# used in the Power Apps form (e.g. "VIC/TAS", "QLD/NT", "NSW/ACT")
 COMPETITOR_STATE_MAP = {
     "VIC": ["VIC/TAS", "VIC"],
     "TAS": ["VIC/TAS", "TAS"],
@@ -90,14 +93,11 @@ ZONES = {
 }
 
 DISCOUNT_OPTIONS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
-
-COST_FACTOR = 0.65  # product cost as fraction of RRP/sell price
-
+COST_FACTOR = 0.65  # default product cost as fraction of RRP/sell price, used when no manual override
 
 # ---------------------------------------------------------------------------
 # Built-in price list (ATF product range)
 # ---------------------------------------------------------------------------
-
 _BUILTIN_PRICE_DATA = [
     {"Internal ID": 8766,  "Name": "ATF1050-CAP",         "Type": "Assembly",        "Display Name": "AtlanFlow 1050mm SN8 Cap Fitting",              "Base Price": None,   "NSW / ACT": 9279,   "NT": 9279,   "QLD": 9279,   "SA": 9279,   "TAS": 9279,   "VIC": 9279,   "WA": 9279},
     {"Internal ID": 8175,  "Name": "ATF1050.8",            "Type": "Assembly",        "Display Name": "AtlanFlow DN1050 SN8",                          "Base Price": 2091.7, "NSW / ACT": 2099.6, "NT": 2099.6, "QLD": 2091.7, "SA": 2191,   "TAS": 2191,   "VIC": 2091.7, "WA": None},
@@ -154,14 +154,21 @@ _BUILTIN_PRICE_DATA = [
     {"Internal ID": 8336,  "Name": "ATFJ150-375/450/525",  "Type": "Inventory Item",  "Display Name": "DN150 Joiner to 375/450/525 SN8 Atlan Flow",    "Base Price": 132,    "NSW / ACT": 132,    "NT": 132,    "QLD": 132,    "SA": 132,    "TAS": 132,    "VIC": 132,    "WA": 132},
     {"Internal ID": 8335,  "Name": "ATFJ150-600/750/900",  "Type": "Inventory Item",  "Display Name": "DN150 Joiner to 600/750/900 SN8 Atlan Flow",    "Base Price": 145,    "NSW / ACT": 145,    "NT": 145,     "QLD": 145,    "SA": 145,    "TAS": 145,    "VIC": 145,    "WA": 145},
 ]
-
 BUILTIN_NETSUITE_DF = pd.DataFrame(_BUILTIN_PRICE_DATA)
 
+# ---------------------------------------------------------------------------
+# Competitor Intelligence expected schema (from the Power Apps / Power
+# Automate build). Every row below is one pipe entry from one submission.
+# ---------------------------------------------------------------------------
+COMPETITOR_EXPECTED_COLUMNS = [
+    "SubmittedBy", "QuoteDate", "ProjectName", "State", "Location", "Competitor",
+    "AtlanReference", "LengthM", "Quantity", "TotalPrice", "Freight",
+    "DeliveryLocation", "DispatchLocation",
+]
 
 # ---------------------------------------------------------------------------
 # CSS
 # ---------------------------------------------------------------------------
-
 st.markdown(
     """
 <style>
@@ -209,11 +216,9 @@ section[data-testid="stSidebar"] { background: #FFFFFF; border-right: 1px solid 
     unsafe_allow_html=True,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
 def money(value: float) -> str:
     return f"${value:,.0f}"
 
@@ -229,7 +234,6 @@ def safe_divide(a: float, b: float) -> float:
 # ---------------------------------------------------------------------------
 # Data loaders
 # ---------------------------------------------------------------------------
-
 def _read_spreadsheet(file_bytes: bytes, filename: str) -> pd.DataFrame:
     """Read xlsx, xls (including XML-disguised), or csv robustly."""
     name = filename.lower()
@@ -257,7 +261,6 @@ def load_competitor(file_bytes: bytes, filename: str) -> pd.DataFrame:
     df = _read_spreadsheet(file_bytes, filename)
     df.columns = [str(c).strip() for c in df.columns]
     return df
-
 
 
 @st.cache_data(show_spinner=False, ttl=0)
@@ -293,7 +296,6 @@ def get_item_price(netsuite_df: pd.DataFrame, item_name: str, region_key: str) -
         col = "Base Price"
     if col not in netsuite_df.columns:
         return None
-
     mask = (
         netsuite_df.get("Display Name", pd.Series(dtype=str)).str.strip().str.lower() == item_name.strip().lower()
     ) | (
@@ -302,7 +304,6 @@ def get_item_price(netsuite_df: pd.DataFrame, item_name: str, region_key: str) -
     rows = netsuite_df[mask]
     if rows.empty:
         return None
-
     val = rows.iloc[0][col]
     try:
         v = float(val)
@@ -318,57 +319,71 @@ def get_item_price(netsuite_df: pd.DataFrame, item_name: str, region_key: str) -
             return None
 
 
-def get_competitor_prices(competitor_df: pd.DataFrame, region_key: str) -> Dict[str, pd.DataFrame]:
-    import re
+def get_item_code(netsuite_df: pd.DataFrame, display_name: str) -> Optional[str]:
+    """Map a Display Name (shown in the item selector) back to its ATF code
+    (the 'Name' column) — this is what competitor AtlanReference values are
+    matched against, since the Power Apps form's dropdown uses these exact
+    codes."""
+    mask = netsuite_df.get("Display Name", pd.Series(dtype=str)).str.strip().str.lower() == display_name.strip().lower()
+    rows = netsuite_df[mask]
+    if rows.empty:
+        return None
+    code = rows.iloc[0].get("Name")
+    return str(code).strip() if pd.notna(code) else None
+
+
+def normalize_competitor_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Coerce competitor data into the expected schema/types, tolerating
+    minor naming drift (e.g. spaces) and missing optional columns."""
+    df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
+    rename_map = {
+        "Submitted By": "SubmittedBy",
+        "Quote Date": "QuoteDate",
+        "Project Name": "ProjectName",
+        "Atlan Reference": "AtlanReference",
+        "Competitor Pipe Size - Length (metres)": "LengthM",
+        "Delivery Location": "DeliveryLocation",
+        "Dispatch Location": "DispatchLocation",
+    }
+    df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+    for col in COMPETITOR_EXPECTED_COLUMNS:
+        if col not in df.columns:
+            df[col] = None
+    for col in ("LengthM", "Quantity", "TotalPrice", "Freight"):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["State"] = df["State"].astype(str).str.strip()
+    df["AtlanReference"] = df["AtlanReference"].astype(str).str.strip()
+    df["Competitor"] = df["Competitor"].astype(str).str.strip()
+    # Price per metre for one pipe entry: TotalPrice covers Quantity pipes,
+    # each LengthM metres long, so unit price/m = TotalPrice / (Qty * LengthM)
+    denom = (df["Quantity"].fillna(0) * df["LengthM"].fillna(0)).replace(0, pd.NA)
+    df["PricePerM"] = df["TotalPrice"] / denom
+    return df
+
+
+def get_competitor_rows_for_region(competitor_df: pd.DataFrame, region_key: str) -> pd.DataFrame:
     state_vals = COMPETITOR_STATE_MAP.get(region_key, [region_key])
-    mask = competitor_df["State"].str.strip().isin(state_vals)
-    subset = competitor_df[mask].copy()
-
-    if subset.empty:
-        return {}
-
-    subset["price"] = pd.to_numeric(subset.get("Price", pd.Series(dtype=float)), errors="coerce")
-
-    def size_from_ref(val: str) -> float:
-        m = re.search(r"ATF(\d{2,4})", str(val).upper())
-        if m:
-            return float(m.group(1))
-        m2 = re.search(r"(\d{2,4})", str(val))
-        return float(m2.group(1)) if m2 else float("nan")
-
-    ref_col = "Atlan Reference" if "Atlan Reference" in subset.columns else None
-    pipe_col = "PipeSize" if "PipeSize" in subset.columns else ("Pipe Size" if "Pipe Size" in subset.columns else None)
-
-    subset["pipe_size_mm"] = float("nan")
-    if ref_col:
-        subset["pipe_size_mm"] = subset[ref_col].apply(size_from_ref)
-    if pipe_col:
-        from_pipe = pd.to_numeric(
-            subset[pipe_col].astype(str).str.replace(r"[^\d.]", "", regex=True), errors="coerce"
-        )
-        subset["pipe_size_mm"] = subset["pipe_size_mm"].combine_first(from_pipe)
-
-    subset = subset.dropna(subset=["price"])
-
-    result = {}
-    for comp, grp in subset.groupby("Competitor"):
-        result[str(comp)] = grp[["pipe_size_mm", "price"]].copy().reset_index(drop=True)
-    return result
+    return competitor_df[competitor_df["State"].isin(state_vals)].copy()
 
 
-def closest_competitor_price(comp_df: pd.DataFrame, target_size_mm: float) -> tuple[float, float]:
-    sized = comp_df.dropna(subset=["pipe_size_mm"])
-    if sized.empty:
-        return float(comp_df["price"].iloc[0]), float("nan")
-    closest_idx = (sized["pipe_size_mm"] - target_size_mm).abs().idxmin()
-    row = sized.loc[closest_idx]
-    return float(row["price"]), float(row["pipe_size_mm"])
+def get_competitor_price_for_code(comp_rows: pd.DataFrame, competitor_name: str, atlan_code: str) -> tuple[Optional[float], int]:
+    """Exact-match a competitor's submitted price for a specific ATF code.
+    Returns (average $/m across matching submissions, number of records
+    matched) so the UI can show how many quotes that average is based on."""
+    matches = comp_rows[
+        (comp_rows["Competitor"] == competitor_name)
+        & (comp_rows["AtlanReference"].str.upper() == str(atlan_code).strip().upper())
+    ]
+    matches = matches.dropna(subset=["PricePerM"])
+    if matches.empty:
+        return None, 0
+    return float(matches["PricePerM"].mean()), len(matches)
 
 
 # ---------------------------------------------------------------------------
 # Freight
 # ---------------------------------------------------------------------------
-
 def calculate_freight(
     fleet_name: str,
     km_one_way: float,
@@ -393,14 +408,16 @@ def calculate_freight(
 # ---------------------------------------------------------------------------
 # Session state helpers
 # ---------------------------------------------------------------------------
-
 def add_delivery() -> None:
     new_id = st.session_state.next_delivery_id
     st.session_state.next_delivery_id += 1
     st.session_state.deliveries.append(
         {
             "id": new_id,
-            "products": [{"item_name": "", "rrp_per_m": 0.0, "quantity_m": 100.0, "discount_pct": 0}],
+            "products": [{
+                "item_name": "", "rrp_per_m": 0.0, "quantity_m": 100.0, "discount_pct": 0,
+                "manual_override": False, "manual_rrp": 0.0, "manual_cost": 0.0,
+            }],
             "freight_method": "Auto calculate",
             "zone": "Metro",
             "km_one_way": 30.0,
@@ -419,7 +436,10 @@ def remove_delivery(delivery_id: int) -> None:
 def add_product_to_delivery(delivery_id: int) -> None:
     for delivery in st.session_state.deliveries:
         if delivery["id"] == delivery_id:
-            delivery["products"].append({"item_name": "", "rrp_per_m": 0.0, "quantity_m": 100.0, "discount_pct": 0})
+            delivery["products"].append({
+                "item_name": "", "rrp_per_m": 0.0, "quantity_m": 100.0, "discount_pct": 0,
+                "manual_override": False, "manual_rrp": 0.0, "manual_cost": 0.0,
+            })
             break
 
 
@@ -433,7 +453,6 @@ def remove_product_from_delivery(delivery_id: int, product_index: int) -> None:
 # ---------------------------------------------------------------------------
 # Calculation
 # ---------------------------------------------------------------------------
-
 def calculate_delivery(delivery: dict, global_inputs: dict, region_key: str) -> tuple[list[dict], float]:
     if delivery["freight_method"] == "Manual override":
         delivery_freight = delivery["manual_freight"]
@@ -451,20 +470,22 @@ def calculate_delivery(delivery: dict, global_inputs: dict, region_key: str) -> 
 
     temp_rows = []
     total_delivery_revenue = 0.0
-
     for product in delivery["products"]:
         item_name = product.get("item_name", "")
         quantity_m = product["quantity_m"]
         discount_pct = product["discount_pct"]
-        rrp_per_m = resolve_price(item_name) if item_name else (product.get("rrp_per_m", 0.0) or 0.0)
 
-        cost_per_m = round(rrp_per_m * COST_FACTOR, 4)
+        if product.get("manual_override"):
+            rrp_per_m = product.get("manual_rrp", 0.0) or 0.0
+            cost_per_m = product.get("manual_cost", 0.0) or 0.0
+        else:
+            rrp_per_m = resolve_price(item_name) if item_name else (product.get("rrp_per_m", 0.0) or 0.0)
+            cost_per_m = round(rrp_per_m * COST_FACTOR, 4)
+
         net_price_per_m = rrp_per_m * (1 - discount_pct / 100)
-
         rrp_revenue = rrp_per_m * quantity_m
         revenue = net_price_per_m * quantity_m
         product_cost = cost_per_m * quantity_m
-
         total_delivery_revenue += revenue
 
         temp_rows.append(
@@ -473,11 +494,13 @@ def calculate_delivery(delivery: dict, global_inputs: dict, region_key: str) -> 
                 "Item": item_name,
                 "Quantity m": quantity_m,
                 "RRP / m": rrp_per_m,
+                "Cost / m": cost_per_m,
                 "Discount %": discount_pct,
                 "Net Price / m": net_price_per_m,
                 "RRP Revenue": rrp_revenue,
                 "Revenue": revenue,
                 "Product Cost": product_cost,
+                "Manual Override": bool(product.get("manual_override")),
             }
         )
 
@@ -505,63 +528,62 @@ def calculate_delivery(delivery: dict, global_inputs: dict, region_key: str) -> 
             }
         )
         final_rows.append(row)
-
     return final_rows, delivery_freight
 
 
 def build_peer_comparison(
     detail_df: pd.DataFrame,
-    competitor_intel: Dict[str, pd.DataFrame],
+    netsuite_df: pd.DataFrame,
+    competitor_rows: pd.DataFrame,
     total_revenue: float,
     total_freight: float,
     peer_freight: Dict[str, float] = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     if peer_freight is None:
         peer_freight = {}
-    import re
-    total_quantity = detail_df["Quantity m"].sum()
-
-    def extract_size(item_name: str) -> float:
-        m = re.search(r"(\d{2,4})", str(item_name))
-        return float(m.group(1)) if m else float("nan")
 
     detail_df = detail_df.copy()
-    detail_df["_size_mm"] = detail_df["Item"].apply(extract_size)
+    detail_df["_atlan_code"] = detail_df["Item"].apply(lambda n: get_item_code(netsuite_df, n) or "")
 
-    atlan_package = sum(line["Net Price / m"] * line["Quantity m"] for _, line in detail_df.iterrows())
     atlan_qty = detail_df["Quantity m"].sum()
+    atlan_package = sum(line["Net Price / m"] * line["Quantity m"] for _, line in detail_df.iterrows())
 
+    competitor_names = sorted(competitor_rows["Competitor"].dropna().unique().tolist())
     summary_rows = []
     line_rows = []
 
-    for comp_name, comp_df in competitor_intel.items():
+    for comp_name in competitor_names:
         comp_package = 0.0
+        matched_any = False
         for _, line in detail_df.iterrows():
-            size_mm = line["_size_mm"]
+            atlan_code = line["_atlan_code"]
             qty = line["Quantity m"]
             atlan_net_m = line["Net Price / m"]
             atlan_line_total = atlan_net_m * qty
 
-            comp_price, matched_size = closest_competitor_price(comp_df, size_mm)
-            if comp_price is None or pd.isna(comp_price):
-                comp_price = 0.0
-                matched_size = float("nan")
-
-            comp_line_total = comp_price * qty
+            comp_price_m, n_records = get_competitor_price_for_code(competitor_rows, comp_name, atlan_code)
+            if comp_price_m is None:
+                comp_price_m = 0.0
+            else:
+                matched_any = True
+            comp_line_total = comp_price_m * qty
             comp_package += comp_line_total
 
             line_rows.append({
                 "Competitor": comp_name,
                 "Item": line["Item"],
-                "Atlan Size (mm)": size_mm,
-                "Comp. Matched Size (mm)": matched_size,
-                "Comp. Price": comp_price,
+                "Atlan Reference": atlan_code,
+                "Comp. $/m": comp_price_m,
+                "Records Matched": n_records,
                 "Atlan Net $/m": atlan_net_m,
                 "Qty m": qty,
                 "Comp. Line Total": comp_line_total,
                 "Atlan Line Total": atlan_line_total,
                 "Line $ Diff": atlan_line_total - comp_line_total,
             })
+
+        if not matched_any:
+            continue  # this competitor has no data for any item in the package
 
         comp_freight = peer_freight.get(comp_name, total_freight)
         summary_rows.append({
@@ -586,9 +608,87 @@ def build_peer_comparison(
 
 
 # ---------------------------------------------------------------------------
+# Excel export (formatted, multi-tab)
+# ---------------------------------------------------------------------------
+HEADER_FILL = PatternFill(start_color="0B5CFF", end_color="0B5CFF", fill_type="solid")
+HEADER_FONT = Font(color="FFFFFF", bold=True, size=11)
+TITLE_FONT = Font(color="071B3A", bold=True, size=14)
+
+
+def _style_header_row(ws, n_cols: int, row: int = 1) -> None:
+    for col_idx in range(1, n_cols + 1):
+        cell = ws.cell(row=row, column=col_idx)
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+
+def _autosize_columns(ws, df: pd.DataFrame, start_col: int = 1) -> None:
+    for i, col in enumerate(df.columns):
+        col_letter = get_column_letter(start_col + i)
+        max_len = max([len(str(col))] + [len(str(v)) for v in df[col].astype(str).head(200)])
+        ws.column_dimensions[col_letter].width = min(max(max_len + 3, 10), 45)
+
+
+def _write_df_sheet(writer, df: pd.DataFrame, sheet_name: str, currency_cols: list[str] = None, title: str = None) -> None:
+    currency_cols = currency_cols or []
+    start_row = 2 if title else 0
+    df.to_excel(writer, sheet_name=sheet_name, index=False, startrow=start_row)
+    ws = writer.sheets[sheet_name]
+    if title:
+        ws.cell(row=1, column=1, value=title).font = TITLE_FONT
+    _style_header_row(ws, len(df.columns), row=start_row + 1)
+    _autosize_columns(ws, df)
+    for col_name in currency_cols:
+        if col_name not in df.columns:
+            continue
+        col_idx = df.columns.get_loc(col_name) + 1
+        for r in range(start_row + 2, start_row + 2 + len(df)):
+            ws.cell(row=r, column=col_idx).number_format = '$#,##0.00'
+    ws.freeze_panes = ws.cell(row=start_row + 2, column=1)
+
+
+def build_excel_export(
+    detail_df: pd.DataFrame,
+    competitor_rows_region: pd.DataFrame,
+    summary_df: pd.DataFrame,
+    line_df: pd.DataFrame,
+    region_key: str,
+) -> bytes:
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        _write_df_sheet(
+            writer, detail_df, "Package Detail",
+            currency_cols=["RRP / m", "Cost / m", "Net Price / m", "RRP Revenue", "Revenue",
+                           "Product Cost", "Freight Allocated", "Total Cost", "Contribution $",
+                           "RRP Contribution $", "Margin Lost $"],
+            title=f"Atlan Package Detail — {region_key}",
+        )
+        _write_df_sheet(
+            writer, summary_df, "Peer Comparison Summary",
+            currency_cols=["Product Package", "Freight", "Total Package", "Avg $/m"],
+            title=f"Atlan vs Competitors — Total Package Comparison ({region_key})",
+        )
+        if not line_df.empty:
+            _write_df_sheet(
+                writer, line_df, "Line-by-Line Breakdown",
+                currency_cols=["Comp. $/m", "Atlan Net $/m", "Comp. Line Total", "Atlan Line Total", "Line $ Diff"],
+                title="Line-by-Line: Atlan vs Each Competitor, per Item",
+            )
+        display_cols = [c for c in COMPETITOR_EXPECTED_COLUMNS if c in competitor_rows_region.columns] + (
+            ["PricePerM"] if "PricePerM" in competitor_rows_region.columns else []
+        )
+        _write_df_sheet(
+            writer, competitor_rows_region[display_cols], "Competitor Raw Data",
+            currency_cols=["TotalPrice", "Freight", "PricePerM"],
+            title=f"Raw Competitor Submissions — {region_key}",
+        )
+    return buffer.getvalue()
+
+
+# ---------------------------------------------------------------------------
 # Session state init
 # ---------------------------------------------------------------------------
-
 if "deliveries" not in st.session_state:
     st.session_state.deliveries = []
 if "next_delivery_id" not in st.session_state:
@@ -596,11 +696,9 @@ if "next_delivery_id" not in st.session_state:
 if not st.session_state.deliveries:
     add_delivery()
 
-
 # ---------------------------------------------------------------------------
 # Hero
 # ---------------------------------------------------------------------------
-
 st.markdown(
     """
 <div class="hero">
@@ -614,14 +712,11 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-
 # ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
-
 with st.sidebar:
     st.markdown("### Data Sources")
-
     netsuite_file = st.file_uploader(
         "NetSuite Price List — optional override (.xlsx / .csv)",
         type=["xlsx", "xls", "csv"],
@@ -631,7 +726,6 @@ with st.sidebar:
     if netsuite_file:
         st.session_state["_netsuite_bytes"] = (netsuite_file.read(), netsuite_file.name)
 
-    # Resolve which NetSuite df to use
     netsuite_df: Optional[pd.DataFrame] = None
     competitor_df: Optional[pd.DataFrame] = None
     netsuite_source = "built-in ATF price list"
@@ -649,13 +743,12 @@ with st.sidebar:
         netsuite_df = BUILTIN_NETSUITE_DF
         st.info(f"✓ Using built-in ATF price list ({len(netsuite_df):,} items). Upload a file above to override.")
 
-    # --- Competitor Intelligence: auto-load from SharePoint, fallback to manual upload ---
     st.markdown("**Competitor Intelligence**")
     sp_df, sp_msg = load_competitor_from_sharepoint()
     if sp_df is not None:
-        competitor_df = sp_df
+        competitor_df = normalize_competitor_df(sp_df)
         st.success(sp_msg)
-        st.caption("Fetches the latest data from SharePoint on every page load. Upload below to override.")
+        st.caption("Fetches the latest approved submissions from SharePoint on every page load. Upload below to override.")
     else:
         st.warning(sp_msg)
 
@@ -663,18 +756,20 @@ with st.sidebar:
         "Manual override — Competitor Intelligence (.xlsx / .csv)",
         type=["xlsx", "xls", "csv"],
         key="competitor_upload",
-        help="Only needed if SharePoint auto-load fails. Columns: SubmittedBy, State, Competitor, Price/m, etc.",
+        help="Only needed if SharePoint auto-load fails. Expected columns: SubmittedBy, QuoteDate, ProjectName, "
+             "State, Location, Competitor, AtlanReference, LengthM, Quantity, TotalPrice, Freight, "
+             "DeliveryLocation, DispatchLocation.",
     )
     if competitor_file:
         try:
             b = competitor_file.read()
-            competitor_df = load_competitor(b, competitor_file.name)
+            raw_df = load_competitor(b, competitor_file.name)
+            competitor_df = normalize_competitor_df(raw_df)
             st.success(f"✓ Manual upload loaded — {len(competitor_df):,} records (overrides SharePoint)")
         except Exception as e:
             st.error(f"Failed to load competitor file: {e}")
 
     st.divider()
-
     st.markdown("### Market & Region")
     region_key = st.selectbox(
         "State / Region",
@@ -684,35 +779,28 @@ with st.sidebar:
     st.caption(REGIONS[region_key].notes)
 
     st.divider()
-
     st.markdown("### Freight Inputs")
     driver_rate = st.number_input("Driver $ / hr", min_value=0.0, value=100.0, step=5.0)
     diesel_price = st.number_input("Diesel $ / L", min_value=0.0, value=3.00, step=0.10)
     avg_speed = st.number_input("Average km / h", min_value=1.0, value=60.0, step=5.0)
 
     st.divider()
-
     st.markdown("### Guardrails")
     target_margin = st.slider("Target margin %", 0, 70, 35, 1) / 100
     risk_margin = st.slider("High-risk margin %", 0, 50, 25, 1) / 100
 
-
 global_inputs = {"driver_rate": driver_rate, "diesel_price": diesel_price, "avg_speed": avg_speed}
-
 
 # ---------------------------------------------------------------------------
 # Build item options for selectors
 # ---------------------------------------------------------------------------
-
 price_col = STATE_TO_NETSUITE_COL.get(region_key, "Base Price")
 if price_col not in netsuite_df.columns:
     price_col = "Base Price"
-
 name_col = "Display Name" if "Display Name" in netsuite_df.columns else "Name"
 price_series = pd.to_numeric(netsuite_df.get(price_col, netsuite_df.get("Base Price", pd.Series(dtype=float))), errors="coerce")
 base_series = pd.to_numeric(netsuite_df.get("Base Price", pd.Series(dtype=float)), errors="coerce")
 effective_price = price_series.combine_first(base_series)
-
 item_mask = effective_price.notna() & (effective_price > 0)
 item_names = netsuite_df.loc[item_mask, name_col].dropna().str.strip().sort_values().tolist()
 
@@ -726,25 +814,22 @@ def resolve_price(item_name: str) -> float:
 # ---------------------------------------------------------------------------
 # Package Builder
 # ---------------------------------------------------------------------------
-
 top_left, top_right = st.columns([0.78, 0.22])
 with top_left:
     st.markdown("### Package Builder")
     st.caption(
         f"Prices from {netsuite_source} — {STATE_TO_NETSUITE_COL.get(region_key, 'Base Price')} column. "
-        "Each delivery can include multiple items. Freight is allocated across products."
+        "Each delivery can include multiple items. Freight is allocated across products. "
+        "Tick 'Manual override' on any line to type your own price/cost instead of the list price."
     )
 with top_right:
     if st.button("+ Add Delivery", type="primary", use_container_width=True):
         add_delivery()
         st.rerun()
 
-
 all_rows = []
-
 for delivery in list(st.session_state.deliveries):
     st.markdown('<div class="card">', unsafe_allow_html=True)
-
     h1, h2 = st.columns([0.82, 0.18])
     with h1:
         st.markdown(f'<div class="title">Delivery {delivery["id"]}</div>', unsafe_allow_html=True)
@@ -756,8 +841,7 @@ for delivery in list(st.session_state.deliveries):
                 st.rerun()
 
     for idx, product in enumerate(list(delivery["products"])):
-        p1, p2, p3, p4, p5, p6 = st.columns([0.26, 0.14, 0.14, 0.14, 0.16, 0.16])
-
+        p1, p2, p3, p4, p5, p6 = st.columns([0.24, 0.12, 0.14, 0.14, 0.14, 0.14])
         with p1:
             current_item = product.get("item_name", "")
             if current_item not in item_names:
@@ -766,7 +850,6 @@ for delivery in list(st.session_state.deliveries):
                 default_idx = item_names.index(current_item)
             except ValueError:
                 default_idx = 0
-
             selected_item = st.selectbox(
                 "Item",
                 item_names,
@@ -774,11 +857,6 @@ for delivery in list(st.session_state.deliveries):
                 key=f"item_{delivery['id']}_{idx}",
             )
             product["item_name"] = selected_item
-            resolved_price = resolve_price(selected_item)
-            product["rrp_per_m"] = resolved_price
-
-        current_price = resolve_price(product["item_name"]) if product.get("item_name") else 0.0
-        product["rrp_per_m"] = current_price
 
         with p2:
             product["quantity_m"] = st.number_input(
@@ -789,11 +867,39 @@ for delivery in list(st.session_state.deliveries):
                 key=f"qty_{delivery['id']}_{idx}",
             )
 
-        with p3:
-            st.metric("Price/m", f"${current_price:,.2f}")
+        product["manual_override"] = st.checkbox(
+            "Manual override price / cost",
+            value=product.get("manual_override", False),
+            key=f"override_{delivery['id']}_{idx}",
+        )
 
-        with p4:
-            st.metric("Cost/m", f"${current_price * COST_FACTOR:,.2f}")
+        if product["manual_override"]:
+            with p3:
+                product["manual_rrp"] = st.number_input(
+                    "Price/m ($)",
+                    min_value=0.0,
+                    value=float(product.get("manual_rrp") or resolve_price(product["item_name"])),
+                    step=1.0,
+                    key=f"manual_rrp_{delivery['id']}_{idx}",
+                )
+            with p4:
+                product["manual_cost"] = st.number_input(
+                    "Cost/m ($)",
+                    min_value=0.0,
+                    value=float(product.get("manual_cost") or (product["manual_rrp"] * COST_FACTOR)),
+                    step=1.0,
+                    key=f"manual_cost_{delivery['id']}_{idx}",
+                )
+            current_price = product["manual_rrp"]
+            current_cost = product["manual_cost"]
+        else:
+            current_price = resolve_price(product["item_name"]) if product.get("item_name") else 0.0
+            current_cost = current_price * COST_FACTOR
+            product["rrp_per_m"] = current_price
+            with p3:
+                st.metric("Price/m", f"${current_price:,.2f}")
+            with p4:
+                st.metric("Cost/m", f"${current_cost:,.2f}")
 
         with p5:
             product["discount_pct"] = st.selectbox(
@@ -803,12 +909,12 @@ for delivery in list(st.session_state.deliveries):
                 key=f"discount_{delivery['id']}_{idx}",
                 format_func=lambda x: f"{x}%",
             )
-
         with p6:
             net = current_price * (1 - product["discount_pct"] / 100)
-            st.metric("Net/m", f"${net:,.2f}")
+            margin_preview = safe_divide(net - current_cost, net)
+            st.metric("Net/m", f"${net:,.2f}", delta=f"{margin_preview:.1%} margin")
             if len(delivery["products"]) > 1:
-                if st.button("✕", key=f"remove_product_{delivery['id']}_{idx}", use_container_width=True):
+                if st.button("✕ Remove line", key=f"remove_product_{delivery['id']}_{idx}", use_container_width=True):
                     remove_product_from_delivery(delivery["id"], idx)
                     st.rerun()
 
@@ -834,7 +940,6 @@ for delivery in list(st.session_state.deliveries):
             if st.button("Use Zone km", key=f"use_zone_{delivery['id']}", use_container_width=True):
                 delivery["km_one_way"] = float(ZONES[delivery["zone"]])
                 st.rerun()
-
         f5, f6, f7, f8 = st.columns(4)
         with f5:
             delivery["km_one_way"] = st.number_input(
@@ -860,23 +965,18 @@ for delivery in list(st.session_state.deliveries):
     delivery_revenue = sum(r["Revenue"] for r in delivery_rows)
     delivery_contribution = sum(r["Contribution $"] for r in delivery_rows)
     delivery_margin = safe_divide(delivery_contribution, delivery_revenue)
-
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Revenue", money(delivery_revenue))
     m2.metric("Freight", money(delivery_freight))
     m3.metric("Contribution", money(delivery_contribution))
     m4.metric("Margin", pct(delivery_margin))
     m5.metric("Lines", len(delivery["products"]))
-
     st.markdown("</div>", unsafe_allow_html=True)
-
 
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
-
 detail_df = pd.DataFrame(all_rows)
-
 if detail_df.empty:
     st.warning("Please add at least one product line.")
     st.stop()
@@ -887,7 +987,6 @@ total_revenue = detail_df["Revenue"].sum()
 total_product_cost = detail_df["Product Cost"].sum()
 total_freight = detail_df["Freight Allocated"].sum()
 total_contribution = detail_df["Contribution $"].sum()
-
 package_margin = safe_divide(total_contribution, total_revenue)
 rrp_contribution = detail_df["RRP Contribution $"].sum()
 rrp_margin = safe_divide(rrp_contribution, total_rrp_revenue)
@@ -897,14 +996,12 @@ margin_lost_pp = (rrp_margin - package_margin) * 100
 
 st.markdown("### Executive Summary")
 st.markdown('<div class="card">', unsafe_allow_html=True)
-
 s1, s2, s3, s4, s5 = st.columns(5)
 s1.metric("Revenue", money(total_revenue), delta=f"{pct(weighted_discount)} discount")
 s2.metric("Contribution", money(total_contribution))
 s3.metric("Margin", pct(package_margin))
 s4.metric("Margin at Risk", money(margin_lost), delta=f"{margin_lost_pp:.1f} pts")
 s5.metric("Freight", money(total_freight))
-
 s6, s7, s8, s9, s10 = st.columns(5)
 s6.metric("List Revenue", money(total_rrp_revenue))
 s7.metric("Product Cost", money(total_product_cost))
@@ -927,8 +1024,8 @@ st.markdown(
 <div class="risk-box {risk_class}">
     <b>{risk_title}</b><br>
     {risk_message}
-    At list price, margin would be <b>{rrp_margin:.1%}</b>. 
-    After discount and freight, it is <b>{package_margin:.1%}</b>. 
+    At list price, margin would be <b>{rrp_margin:.1%}</b>.
+    After discount and freight, it is <b>{package_margin:.1%}</b>.
     Contribution at risk is <b>{money(margin_lost)}</b>.
 </div>
 """,
@@ -936,20 +1033,21 @@ st.markdown(
 )
 st.markdown("</div>", unsafe_allow_html=True)
 
-
 # ---------------------------------------------------------------------------
 # Competitor comparison
 # ---------------------------------------------------------------------------
-
 st.markdown("### Competitor Intelligence")
 st.markdown('<div class="card">', unsafe_allow_html=True)
 
+summary_df = pd.DataFrame()
+line_df = pd.DataFrame()
+competitor_rows_region = pd.DataFrame()
+
 if competitor_df is not None:
-    competitor_intel = get_competitor_prices(competitor_df, region_key)
+    competitor_rows_region = get_competitor_rows_for_region(competitor_df, region_key)
+    comp_names = sorted(competitor_rows_region["Competitor"].dropna().unique().tolist())
 
-    if competitor_intel:
-        comp_names = list(competitor_intel.keys())
-
+    if comp_names:
         with st.expander("Peer Freight Assumptions", expanded=False):
             st.caption("Competitor freight defaults to Atlan's calculated freight. Edit each manually if known.")
             peer_freight = {}
@@ -965,46 +1063,46 @@ if competitor_df is not None:
                     )
 
         summary_df, line_df = build_peer_comparison(
-            detail_df, competitor_intel, total_revenue, total_freight, peer_freight
+            detail_df, netsuite_df, competitor_rows_region, total_revenue, total_freight, peer_freight
         )
 
         st.caption(
             f"Competitor prices filtered to {region_key} / {', '.join(COMPETITOR_STATE_MAP.get(region_key, [region_key]))} region. "
-            f"{sum(len(d) for d in competitor_intel.values())} records used. "
-            f"Product package = competitor Price × your quantity for the closest matching pipe size."
+            f"{len(competitor_rows_region):,} approved records available. "
+            f"Matching is by exact Atlan Reference code (e.g. ATF300.8), not nearest pipe size."
         )
 
-        st.dataframe(
-            summary_df.style.format(
-                {
-                    "Avg $/m": "${:,.2f}",
-                    "Product Package": "${:,.0f}",
-                    "Freight": "${:,.0f}",
-                    "Total Package": "${:,.0f}",
-                }
-            ),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-        comp_packages = summary_df.loc[summary_df["Supplier"] != "✦ Atlan Proposed", "Total Package"]
-        if not comp_packages.empty:
-            peer_avg = comp_packages.mean()
-            gap = safe_divide(total_revenue - peer_avg, peer_avg)
-            if gap > 0.10:
-                st.warning(f"Atlan is priced {gap:.1%} above the competitor average package.")
-            elif gap < -0.05:
-                st.success(f"Atlan is priced {abs(gap):.1%} below the competitor average package.")
-            else:
-                st.info(f"Atlan is broadly market-aligned at {gap:.1%} versus the competitor average.")
+        if not summary_df.empty:
+            st.dataframe(
+                summary_df.style.format(
+                    {
+                        "Avg $/m": "${:,.2f}",
+                        "Product Package": "${:,.0f}",
+                        "Freight": "${:,.0f}",
+                        "Total Package": "${:,.0f}",
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+            comp_packages = summary_df.loc[summary_df["Supplier"] != "✦ Atlan Proposed", "Total Package"]
+            if not comp_packages.empty:
+                peer_avg = comp_packages.mean()
+                gap = safe_divide(total_revenue - peer_avg, peer_avg)
+                if gap > 0.10:
+                    st.warning(f"Atlan is priced {gap:.1%} above the competitor average package.")
+                elif gap < -0.05:
+                    st.success(f"Atlan is priced {abs(gap):.1%} below the competitor average package.")
+                else:
+                    st.info(f"Atlan is broadly market-aligned at {gap:.1%} versus the competitor average.")
+        else:
+            st.info("No competitor has approved pricing for any of the Atlan Reference codes in this package yet.")
 
         if not line_df.empty:
             with st.expander("Line-by-line competitor breakdown", expanded=False):
-                st.caption("For each Atlan line item, the closest matching pipe size in competitor data is used.")
+                st.caption("For each Atlan line item, matched against the same Atlan Reference code in competitor submissions.")
                 fmt = {
-                    "Atlan Size (mm)": "{:.0f}",
-                    "Comp. Matched Size (mm)": "{:.0f}",
-                    "Comp. Price": "${:,.2f}",
+                    "Comp. $/m": "${:,.2f}",
                     "Atlan Net $/m": "${:,.2f}",
                     "Qty m": "{:,.0f}",
                     "Comp. Line Total": "${:,.0f}",
@@ -1014,30 +1112,28 @@ if competitor_df is not None:
                 st.dataframe(line_df.style.format(fmt), use_container_width=True, hide_index=True)
 
         with st.expander("Raw competitor records for this region", expanded=False):
-            state_vals = COMPETITOR_STATE_MAP.get(region_key, [region_key])
+            display_cols = [c for c in COMPETITOR_EXPECTED_COLUMNS if c in competitor_rows_region.columns] + ["PricePerM"]
             st.dataframe(
-                competitor_df[competitor_df["State"].str.strip().isin(state_vals)],
+                competitor_rows_region[display_cols].style.format({"PricePerM": "${:,.2f}", "TotalPrice": "${:,.0f}", "Freight": "${:,.0f}"}),
                 use_container_width=True,
                 hide_index=True,
             )
     else:
-        st.info(f"No competitor records found for region **{region_key}** in the uploaded file.")
+        st.info(f"No competitor records found for region **{region_key}** in the loaded file.")
 else:
     st.info("Upload the Competitor Intelligence file in the sidebar to enable peer comparison.")
-
 st.markdown("</div>", unsafe_allow_html=True)
-
 
 # ---------------------------------------------------------------------------
 # Detailed output
 # ---------------------------------------------------------------------------
-
 with st.expander("Detailed Product Output", expanded=False):
     st.dataframe(
         detail_df.style.format(
             {
                 "Quantity m": "{:,.0f}",
                 "RRP / m": "${:,.2f}",
+                "Cost / m": "${:,.2f}",
                 "Discount %": "{:.0f}%",
                 "Net Price / m": "${:,.2f}",
                 "RRP Revenue": "${:,.0f}",
@@ -1057,11 +1153,25 @@ with st.expander("Detailed Product Output", expanded=False):
         hide_index=True,
     )
 
-csv = detail_df.to_csv(index=False)
-st.download_button(
-    label="Download pricing output",
-    data=csv,
-    file_name="atlan_pricing_output.csv",
-    mime="text/csv",
-    use_container_width=True,
-)
+# ---------------------------------------------------------------------------
+# Downloads
+# ---------------------------------------------------------------------------
+dl1, dl2 = st.columns(2)
+with dl1:
+    csv = detail_df.to_csv(index=False)
+    st.download_button(
+        label="Download package detail (CSV)",
+        data=csv,
+        file_name="atlan_pricing_output.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+with dl2:
+    excel_bytes = build_excel_export(detail_df, competitor_rows_region, summary_df, line_df, region_key)
+    st.download_button(
+        label="Download full comparison (Excel, formatted, multi-tab)",
+        data=excel_bytes,
+        file_name=f"atlan_competitor_comparison_{region_key}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
