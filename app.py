@@ -367,18 +367,41 @@ def get_competitor_rows_for_region(competitor_df: pd.DataFrame, region_key: str)
     return competitor_df[competitor_df["State"].isin(state_vals)].copy()
 
 
-def get_competitor_price_for_code(comp_rows: pd.DataFrame, competitor_name: str, atlan_code: str) -> tuple[Optional[float], int]:
-    """Exact-match a competitor's submitted price for a specific ATF code.
-    Returns (average $/m across matching submissions, number of records
-    matched) so the UI can show how many quotes that average is based on."""
-    matches = comp_rows[
+def _extract_size_mm(code: str) -> Optional[str]:
+    """Pull the numeric pipe size out of an ATF code, e.g. 'ATF225-45' and
+    'ATF225.8' both yield '225'. Used only as a fallback when an exact code
+    match isn't available."""
+    m = re.search(r"ATF(\d{2,4})", str(code).upper())
+    return m.group(1) if m else None
+
+
+def get_competitor_price_for_code(comp_rows: pd.DataFrame, competitor_name: str, atlan_code: str) -> tuple[Optional[float], int, str]:
+    """Match a competitor's submitted price for a specific ATF code.
+    Tries an exact reference match first (e.g. 'ATF225.8' == 'ATF225.8').
+    If nothing matches, falls back to matching on pipe size only (e.g.
+    'ATF225-45' and 'ATF225.8' both size 225) — this compares a fitting
+    against a straight pipe of the same size, which is approximate, not
+    equivalent, so it's flagged as 'size_fallback' rather than 'exact'.
+    Returns (average $/m, number of records matched, match_type) where
+    match_type is one of 'exact', 'size_fallback', or 'none'."""
+    exact = comp_rows[
         (comp_rows["Competitor"] == competitor_name)
         & (comp_rows["AtlanReference"].str.upper() == str(atlan_code).strip().upper())
     ]
-    matches = matches.dropna(subset=["PricePerM"])
-    if matches.empty:
-        return None, 0
-    return float(matches["PricePerM"].mean()), len(matches)
+    exact = exact.dropna(subset=["PricePerM"])
+    if not exact.empty:
+        return float(exact["PricePerM"].mean()), len(exact), "exact"
+
+    target_size = _extract_size_mm(atlan_code)
+    if target_size is None:
+        return None, 0, "none"
+
+    comp_subset = comp_rows[comp_rows["Competitor"] == competitor_name].copy()
+    comp_subset["_size"] = comp_subset["AtlanReference"].apply(_extract_size_mm)
+    size_matches = comp_subset[comp_subset["_size"] == target_size].dropna(subset=["PricePerM"])
+    if size_matches.empty:
+        return None, 0, "none"
+    return float(size_matches["PricePerM"].mean()), len(size_matches), "size_fallback"
 
 
 # ---------------------------------------------------------------------------
@@ -561,7 +584,7 @@ def build_peer_comparison(
             atlan_net_m = line["Net Price / m"]
             atlan_line_total = atlan_net_m * qty
 
-            comp_price_m, n_records = get_competitor_price_for_code(competitor_rows, comp_name, atlan_code)
+            comp_price_m, n_records, match_type = get_competitor_price_for_code(competitor_rows, comp_name, atlan_code)
             if comp_price_m is None:
                 comp_price_m = 0.0
             else:
@@ -574,6 +597,7 @@ def build_peer_comparison(
                 "Item": line["Item"],
                 "Atlan Reference": atlan_code,
                 "Comp. $/m": comp_price_m,
+                "Match Type": {"exact": "Exact", "size_fallback": "Approx (same size)", "none": "No match"}[match_type],
                 "Records Matched": n_records,
                 "Atlan Net $/m": atlan_net_m,
                 "Qty m": qty,
@@ -1069,7 +1093,8 @@ if competitor_df is not None:
         st.caption(
             f"Competitor prices filtered to {region_key} / {', '.join(COMPETITOR_STATE_MAP.get(region_key, [region_key]))} region. "
             f"{len(competitor_rows_region):,} approved records available. "
-            f"Matching is by exact Atlan Reference code (e.g. ATF300.8), not nearest pipe size."
+            f"Matching tries the exact Atlan Reference code first (e.g. ATF300.8); if a competitor has no "
+            f"quote for that exact code, it falls back to matching by pipe size only (flagged 'Approx' below)."
         )
 
         if not summary_df.empty:
@@ -1100,7 +1125,7 @@ if competitor_df is not None:
 
         if not line_df.empty:
             with st.expander("Line-by-line competitor breakdown", expanded=False):
-                st.caption("For each Atlan line item, matched against the same Atlan Reference code in competitor submissions.")
+                st.caption("For each Atlan line item, matched against competitor submissions — check 'Match Type' to see whether it's an exact code match or an approximate same-size match.")
                 fmt = {
                     "Comp. $/m": "${:,.2f}",
                     "Atlan Net $/m": "${:,.2f}",
