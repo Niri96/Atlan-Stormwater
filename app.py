@@ -439,6 +439,7 @@ def add_delivery() -> None:
             "id": new_id,
             "products": [{
                 "item_name": "", "rrp_per_m": 0.0, "quantity_m": 100.0, "discount_pct": 0,
+                "stock_length_m": 6.0,
                 "manual_override": False, "manual_rrp": 0.0, "manual_cost": 0.0,
             }],
             "freight_method": "Auto calculate",
@@ -461,6 +462,7 @@ def add_product_to_delivery(delivery_id: int) -> None:
         if delivery["id"] == delivery_id:
             delivery["products"].append({
                 "item_name": "", "rrp_per_m": 0.0, "quantity_m": 100.0, "discount_pct": 0,
+                "stock_length_m": 6.0,
                 "manual_override": False, "manual_rrp": 0.0, "manual_cost": 0.0,
             })
             break
@@ -502,7 +504,9 @@ def calculate_delivery(delivery: dict, global_inputs: dict, region_key: str) -> 
             rrp_per_m = product.get("manual_rrp", 0.0) or 0.0
             cost_per_m = product.get("manual_cost", 0.0) or 0.0
         else:
-            rrp_per_m = resolve_price(item_name) if item_name else (product.get("rrp_per_m", 0.0) or 0.0)
+            stock_length_m = product.get("stock_length_m", 6.0) or 6.0
+            raw_each_price = resolve_price(item_name) if item_name else (product.get("rrp_per_m", 0.0) or 0.0)
+            rrp_per_m = safe_divide(raw_each_price, stock_length_m)
             cost_per_m = round(rrp_per_m * COST_FACTOR, 4)
 
         net_price_per_m = rrp_per_m * (1 - discount_pct / 100)
@@ -830,7 +834,10 @@ item_names = netsuite_df.loc[item_mask, name_col].dropna().str.strip().sort_valu
 
 
 def resolve_price(item_name: str) -> float:
-    """Return sell price per metre for item_name in current region."""
+    """Return the raw NetSuite sell price for item_name in current region.
+    This is priced per EACH pipe (per stock length, e.g. ~6m) — NOT per
+    metre. Callers must divide by stock length to get $/m; see
+    calculate_delivery, which does this via product['stock_length_m']."""
     p = get_item_price(netsuite_df, item_name, region_key)
     return p if p is not None else 0.0
 
@@ -865,7 +872,7 @@ for delivery in list(st.session_state.deliveries):
                 st.rerun()
 
     for idx, product in enumerate(list(delivery["products"])):
-        p1, p2, p3, p4, p5, p6 = st.columns([0.24, 0.12, 0.14, 0.14, 0.14, 0.14])
+        p1, p2, p3, p4, p5, p6, p7 = st.columns([0.20, 0.10, 0.11, 0.13, 0.13, 0.12, 0.14])
         with p1:
             current_item = product.get("item_name", "")
             if current_item not in item_names:
@@ -897,16 +904,20 @@ for delivery in list(st.session_state.deliveries):
             key=f"override_{delivery['id']}_{idx}",
         )
 
+        raw_each_price = resolve_price(product["item_name"]) if product.get("item_name") else 0.0
+
         if product["manual_override"]:
             with p3:
+                st.metric("List (each)", f"${raw_each_price:,.2f}")
+            with p4:
                 product["manual_rrp"] = st.number_input(
                     "Price/m ($)",
                     min_value=0.0,
-                    value=float(product.get("manual_rrp") or resolve_price(product["item_name"])),
+                    value=float(product.get("manual_rrp") or 0.0),
                     step=1.0,
                     key=f"manual_rrp_{delivery['id']}_{idx}",
                 )
-            with p4:
+            with p5:
                 product["manual_cost"] = st.number_input(
                     "Cost/m ($)",
                     min_value=0.0,
@@ -917,15 +928,26 @@ for delivery in list(st.session_state.deliveries):
             current_price = product["manual_rrp"]
             current_cost = product["manual_cost"]
         else:
-            current_price = resolve_price(product["item_name"]) if product.get("item_name") else 0.0
+            with p3:
+                product["stock_length_m"] = st.number_input(
+                    "Stock length (m)",
+                    min_value=0.1,
+                    value=float(product.get("stock_length_m", 6.0)),
+                    step=0.1,
+                    key=f"stock_len_{delivery['id']}_{idx}",
+                    help="NetSuite lists price per pipe (each), not per metre. This converts it: "
+                         "Price/m = list price ÷ stock length.",
+                )
+            stock_length_m = product["stock_length_m"]
+            current_price = safe_divide(raw_each_price, stock_length_m)
             current_cost = current_price * COST_FACTOR
             product["rrp_per_m"] = current_price
-            with p3:
-                st.metric("Price/m", f"${current_price:,.2f}")
             with p4:
+                st.metric("Price/m", f"${current_price:,.2f}", delta=f"${raw_each_price:,.2f} each")
+            with p5:
                 st.metric("Cost/m", f"${current_cost:,.2f}")
 
-        with p5:
+        with p6:
             product["discount_pct"] = st.selectbox(
                 "Discount",
                 DISCOUNT_OPTIONS,
@@ -933,7 +955,7 @@ for delivery in list(st.session_state.deliveries):
                 key=f"discount_{delivery['id']}_{idx}",
                 format_func=lambda x: f"{x}%",
             )
-        with p6:
+        with p7:
             net = current_price * (1 - product["discount_pct"] / 100)
             margin_preview = safe_divide(net - current_cost, net)
             st.metric("Net/m", f"${net:,.2f}", delta=f"{margin_preview:.1%} margin")
