@@ -231,27 +231,6 @@ def safe_divide(a: float, b: float) -> float:
     return a / b if b else 0.0
 
 
-def format_display_df(df: pd.DataFrame, formats: Dict[str, str]) -> pd.DataFrame:
-    """Pre-format numeric columns into plain display strings, instead of
-    using pandas Styler. Streamlit renders Styler objects by serializing
-    through Arrow, which has been an unstable path across some pandas/
-    numpy/pyarrow version combinations (can segfault) — plain strings are
-    always safe to render."""
-    out = df.copy()
-    for col, fmt in formats.items():
-        if col not in out.columns:
-            continue
-        def _fmt(v, fmt=fmt):
-            if pd.isna(v):
-                return ""
-            try:
-                return fmt.format(v)
-            except (ValueError, TypeError):
-                return str(v)
-        out[col] = out[col].apply(_fmt)
-    return out
-
-
 # ---------------------------------------------------------------------------
 # Data loaders
 # ---------------------------------------------------------------------------
@@ -373,9 +352,9 @@ def normalize_competitor_df(df: pd.DataFrame) -> pd.DataFrame:
             df[col] = None
     for col in ("LengthM", "Quantity", "TotalPrice", "Freight"):
         df[col] = pd.to_numeric(df[col], errors="coerce")
-    df["State"] = df["State"].fillna("").astype(str).str.strip()
-    df["AtlanReference"] = df["AtlanReference"].fillna("").astype(str).str.strip()
-    df["Competitor"] = df["Competitor"].fillna("").astype(str).str.strip()
+    df["State"] = df["State"].astype(str).str.strip()
+    df["AtlanReference"] = df["AtlanReference"].astype(str).str.strip()
+    df["Competitor"] = df["Competitor"].astype(str).str.strip()
     # Price per metre for one pipe entry: TotalPrice covers Quantity pipes,
     # each LengthM metres long, so unit price/m = TotalPrice / (Qty * LengthM)
     denom = (df["Quantity"].fillna(0) * df["LengthM"].fillna(0)).replace(0, pd.NA)
@@ -875,7 +854,7 @@ with top_left:
         "Tick 'Manual override' on any line to type your own price/cost instead of the list price."
     )
 with top_right:
-    if st.button("+ Add Delivery", type="primary", width="stretch"):
+    if st.button("+ Add Delivery", type="primary", use_container_width=True):
         add_delivery()
         st.rerun()
 
@@ -888,7 +867,7 @@ for delivery in list(st.session_state.deliveries):
         st.markdown('<div class="subtle">Select items from the price list, enter quantity and discount.</div>', unsafe_allow_html=True)
     with h2:
         if len(st.session_state.deliveries) > 1:
-            if st.button("Remove", key=f"remove_delivery_{delivery['id']}", width="stretch"):
+            if st.button("Remove", key=f"remove_delivery_{delivery['id']}", use_container_width=True):
                 remove_delivery(delivery["id"])
                 st.rerun()
 
@@ -981,11 +960,11 @@ for delivery in list(st.session_state.deliveries):
             margin_preview = safe_divide(net - current_cost, net)
             st.metric("Net/m", f"${net:,.2f}", delta=f"{margin_preview:.1%} margin")
             if len(delivery["products"]) > 1:
-                if st.button("✕ Remove line", key=f"remove_product_{delivery['id']}_{idx}", width="stretch"):
+                if st.button("✕ Remove line", key=f"remove_product_{delivery['id']}_{idx}", use_container_width=True):
                     remove_product_from_delivery(delivery["id"], idx)
                     st.rerun()
 
-    if st.button("+ Add Item", key=f"add_product_{delivery['id']}", width="stretch"):
+    if st.button("+ Add Item", key=f"add_product_{delivery['id']}", use_container_width=True):
         add_product_to_delivery(delivery["id"])
         st.rerun()
 
@@ -1004,7 +983,7 @@ for delivery in list(st.session_state.deliveries):
                 "Zone", list(ZONES.keys()), index=list(ZONES.keys()).index(delivery["zone"]), key=f"zone_{delivery['id']}"
             )
         with f4:
-            if st.button("Use Zone km", key=f"use_zone_{delivery['id']}", width="stretch"):
+            if st.button("Use Zone km", key=f"use_zone_{delivery['id']}", use_container_width=True):
                 delivery["km_one_way"] = float(ZONES[delivery["zone"]])
                 st.rerun()
         f5, f6, f7, f8 = st.columns(4)
@@ -1110,99 +1089,95 @@ summary_df = pd.DataFrame()
 line_df = pd.DataFrame()
 competitor_rows_region = pd.DataFrame()
 
-try:
-    if competitor_df is not None:
-        competitor_rows_region = get_competitor_rows_for_region(competitor_df, region_key)
-        comp_names = sorted(competitor_rows_region["Competitor"].dropna().unique().tolist())
+if competitor_df is not None:
+    competitor_rows_region = get_competitor_rows_for_region(competitor_df, region_key)
+    comp_names = sorted(competitor_rows_region["Competitor"].dropna().unique().tolist())
 
-        if comp_names:
-            with st.expander("Peer Freight Assumptions", expanded=False):
-                st.caption("Competitor freight defaults to Atlan's calculated freight. Edit each manually if known.")
-                peer_freight = {}
-                peer_cols = st.columns(len(comp_names))
-                for col, comp_name in zip(peer_cols, comp_names):
-                    with col:
-                        peer_freight[comp_name] = st.number_input(
-                            comp_name,
-                            min_value=0.0,
-                            value=float(total_freight),
-                            step=50.0,
-                            key=f"peer_freight_{comp_name}",
-                        )
+    if comp_names:
+        with st.expander("Peer Freight Assumptions", expanded=False):
+            st.caption("Competitor freight defaults to Atlan's calculated freight. Edit each manually if known.")
+            peer_freight = {}
+            peer_cols = st.columns(len(comp_names))
+            for col, comp_name in zip(peer_cols, comp_names):
+                with col:
+                    peer_freight[comp_name] = st.number_input(
+                        comp_name,
+                        min_value=0.0,
+                        value=float(total_freight),
+                        step=50.0,
+                        key=f"peer_freight_{comp_name}",
+                    )
 
-            summary_df, line_df = build_peer_comparison(
-                detail_df, netsuite_df, competitor_rows_region, total_revenue, total_freight, peer_freight
-            )
+        summary_df, line_df = build_peer_comparison(
+            detail_df, netsuite_df, competitor_rows_region, total_revenue, total_freight, peer_freight
+        )
 
-            st.caption(
-                f"Competitor prices filtered to {region_key} / {', '.join(COMPETITOR_STATE_MAP.get(region_key, [region_key]))} region. "
-                f"{len(competitor_rows_region):,} approved records available. "
-                f"Matching tries the exact Atlan Reference code first (e.g. ATF300.8); if a competitor has no "
-                f"quote for that exact code, it falls back to matching by pipe size only (flagged 'Approx' below)."
-            )
+        st.caption(
+            f"Competitor prices filtered to {region_key} / {', '.join(COMPETITOR_STATE_MAP.get(region_key, [region_key]))} region. "
+            f"{len(competitor_rows_region):,} approved records available. "
+            f"Matching tries the exact Atlan Reference code first (e.g. ATF300.8); if a competitor has no "
+            f"quote for that exact code, it falls back to matching by pipe size only (flagged 'Approx' below)."
+        )
 
-            if not summary_df.empty:
-                st.dataframe(
-                    format_display_df(summary_df, {
+        if not summary_df.empty:
+            st.dataframe(
+                summary_df.style.format(
+                    {
                         "Avg $/m": "${:,.2f}",
                         "Product Package": "${:,.0f}",
                         "Freight": "${:,.0f}",
                         "Total Package": "${:,.0f}",
-                    }),
-                    width="stretch",
-                    hide_index=True,
-                )
-                comp_packages = summary_df.loc[summary_df["Supplier"] != "✦ Atlan Proposed", "Total Package"]
-                if not comp_packages.empty:
-                    peer_avg = comp_packages.mean()
-                    gap = safe_divide(total_revenue - peer_avg, peer_avg)
-                    if gap > 0.10:
-                        st.warning(f"Atlan is priced {gap:.1%} above the competitor average package.")
-                    elif gap < -0.05:
-                        st.success(f"Atlan is priced {abs(gap):.1%} below the competitor average package.")
-                    else:
-                        st.info(f"Atlan is broadly market-aligned at {gap:.1%} versus the competitor average.")
-            else:
-                st.info("No competitor has approved pricing for any of the Atlan Reference codes in this package yet.")
-
-            if not line_df.empty:
-                with st.expander("Line-by-line competitor breakdown", expanded=False):
-                    st.caption("For each Atlan line item, matched against competitor submissions — check 'Match Type' to see whether it's an exact code match or an approximate same-size match.")
-                    fmt = {
-                        "Comp. $/m": "${:,.2f}",
-                        "Atlan Net $/m": "${:,.2f}",
-                        "Qty m": "{:,.0f}",
-                        "Comp. Line Total": "${:,.0f}",
-                        "Atlan Line Total": "${:,.0f}",
-                        "Line $ Diff": "${:,.0f}",
                     }
-                    st.dataframe(format_display_df(line_df, fmt), width="stretch", hide_index=True)
-
-            with st.expander("Raw competitor records for this region", expanded=False):
-                display_cols = [c for c in COMPETITOR_EXPECTED_COLUMNS if c in competitor_rows_region.columns] + ["PricePerM"]
-                st.dataframe(
-                    format_display_df(competitor_rows_region[display_cols], {"PricePerM": "${:,.2f}", "TotalPrice": "${:,.0f}", "Freight": "${:,.0f}"}),
-                    width="stretch",
-                    hide_index=True,
-                )
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+            comp_packages = summary_df.loc[summary_df["Supplier"] != "✦ Atlan Proposed", "Total Package"]
+            if not comp_packages.empty:
+                peer_avg = comp_packages.mean()
+                gap = safe_divide(total_revenue - peer_avg, peer_avg)
+                if gap > 0.10:
+                    st.warning(f"Atlan is priced {gap:.1%} above the competitor average package.")
+                elif gap < -0.05:
+                    st.success(f"Atlan is priced {abs(gap):.1%} below the competitor average package.")
+                else:
+                    st.info(f"Atlan is broadly market-aligned at {gap:.1%} versus the competitor average.")
         else:
-            st.info(f"No competitor records found for region **{region_key}** in the loaded file.")
+            st.info("No competitor has approved pricing for any of the Atlan Reference codes in this package yet.")
+
+        if not line_df.empty:
+            with st.expander("Line-by-line competitor breakdown", expanded=False):
+                st.caption("For each Atlan line item, matched against competitor submissions — check 'Match Type' to see whether it's an exact code match or an approximate same-size match.")
+                fmt = {
+                    "Comp. $/m": "${:,.2f}",
+                    "Atlan Net $/m": "${:,.2f}",
+                    "Qty m": "{:,.0f}",
+                    "Comp. Line Total": "${:,.0f}",
+                    "Atlan Line Total": "${:,.0f}",
+                    "Line $ Diff": "${:,.0f}",
+                }
+                st.dataframe(line_df.style.format(fmt), use_container_width=True, hide_index=True)
+
+        with st.expander("Raw competitor records for this region", expanded=False):
+            display_cols = [c for c in COMPETITOR_EXPECTED_COLUMNS if c in competitor_rows_region.columns] + ["PricePerM"]
+            st.dataframe(
+                competitor_rows_region[display_cols].style.format({"PricePerM": "${:,.2f}", "TotalPrice": "${:,.0f}", "Freight": "${:,.0f}"}),
+                use_container_width=True,
+                hide_index=True,
+            )
     else:
-        st.info("Upload the Competitor Intelligence file in the sidebar to enable peer comparison.")
-except Exception as e:
-    st.error(f"Competitor comparison could not be built: {e}")
-    summary_df = pd.DataFrame()
-    line_df = pd.DataFrame()
-    competitor_rows_region = pd.DataFrame()
+        st.info(f"No competitor records found for region **{region_key}** in the loaded file.")
+else:
+    st.info("Upload the Competitor Intelligence file in the sidebar to enable peer comparison.")
 st.markdown("</div>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Detailed output
 # ---------------------------------------------------------------------------
 with st.expander("Detailed Product Output", expanded=False):
-    try:
-        st.dataframe(
-            format_display_df(detail_df, {
+    st.dataframe(
+        detail_df.style.format(
+            {
                 "Quantity m": "{:,.0f}",
                 "RRP / m": "${:,.2f}",
                 "Cost / m": "${:,.2f}",
@@ -1219,13 +1194,11 @@ with st.expander("Detailed Product Output", expanded=False):
                 "RRP Margin %": "{:.1%}",
                 "Margin Lost $": "${:,.0f}",
                 "Margin Lost pp": "{:.1f} pts",
-            }),
-            width="stretch",
-            hide_index=True,
-        )
-    except Exception as e:
-        st.warning(f"Could not apply formatting to the detail table ({e}); showing raw data instead.")
-        st.dataframe(detail_df, width="stretch", hide_index=True)
+            }
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
 
 # ---------------------------------------------------------------------------
 # Downloads
@@ -1238,17 +1211,14 @@ with dl1:
         data=csv,
         file_name="atlan_pricing_output.csv",
         mime="text/csv",
-        width="stretch",
+        use_container_width=True,
     )
 with dl2:
-    try:
-        excel_bytes = build_excel_export(detail_df, competitor_rows_region, summary_df, line_df, region_key)
-        st.download_button(
-            label="Download full comparison (Excel, formatted, multi-tab)",
-            data=excel_bytes,
-            file_name=f"atlan_competitor_comparison_{region_key}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width="stretch",
-        )
-    except Exception as e:
-        st.error(f"Could not build the Excel export: {e}")
+    excel_bytes = build_excel_export(detail_df, competitor_rows_region, summary_df, line_df, region_key)
+    st.download_button(
+        label="Download full comparison (Excel, formatted, multi-tab)",
+        data=excel_bytes,
+        file_name=f"atlan_competitor_comparison_{region_key}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
