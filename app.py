@@ -380,6 +380,13 @@ def normalize_competitor_df(df: pd.DataFrame) -> pd.DataFrame:
     # each LengthM metres long, so unit price/m = TotalPrice / (Qty * LengthM)
     denom = (df["Quantity"].fillna(0) * df["LengthM"].fillna(0)).replace(0, pd.NA)
     df["PricePerM"] = df["TotalPrice"] / denom
+    # Price per UNIT (per pipe/each) — this is the primary metric used for
+    # peer comparison, since Quantity is a count of physical units and
+    # NetSuite prices are also per-unit, not per-metre. Comparing $/unit
+    # avoids introducing error from length assumptions that may differ
+    # between Atlan's stock length and what a competitor actually quoted.
+    qty_denom = df["Quantity"].replace(0, pd.NA)
+    df["PriceEach"] = df["TotalPrice"] / qty_denom
     return df
 
 
@@ -397,32 +404,48 @@ def _extract_size_mm(code: str) -> Optional[str]:
 
 
 def get_competitor_price_for_code(comp_rows: pd.DataFrame, competitor_name: str, atlan_code: str) -> tuple[Optional[float], int, str]:
-    """Match a competitor's submitted price for a specific ATF code.
-    Tries an exact reference match first (e.g. 'ATF225.8' == 'ATF225.8').
-    If nothing matches, falls back to matching on pipe size only (e.g.
-    'ATF225-45' and 'ATF225.8' both size 225) — this compares a fitting
-    against a straight pipe of the same size, which is approximate, not
-    equivalent, so it's flagged as 'size_fallback' rather than 'exact'.
-    Returns (average $/m, number of records matched, match_type) where
-    match_type is one of 'exact', 'size_fallback', or 'none'."""
+    """Match a competitor's submitted price-per-unit for a specific ATF
+    code. Three tiers, tried in order:
+    1. Exact reference match (e.g. 'ATF225.8' == 'ATF225.8')
+    2. Same-size match (e.g. 'ATF225-45' fitting matches 'ATF225.8' pipe,
+       both size 225) — approximate, comparing a fitting to a straight pipe
+    3. Nearest-size match — if this competitor has no 225 at all, use
+       whichever size they DO have that's numerically closest (e.g. 300)
+       so there's always something usable rather than a blank comparison
+    Returns (average $/unit, number of records matched, match_type) where
+    match_type is 'exact', 'size_fallback', or 'nearest_size', or (None, 0,
+    'none') if this competitor has no usable data at all."""
     exact = comp_rows[
         (comp_rows["Competitor"] == competitor_name)
         & (comp_rows["AtlanReference"].str.upper() == str(atlan_code).strip().upper())
     ]
-    exact = exact.dropna(subset=["PricePerM"])
+    exact = exact.dropna(subset=["PriceEach"])
     if not exact.empty:
-        return float(exact["PricePerM"].mean()), len(exact), "exact"
+        return float(exact["PriceEach"].mean()), len(exact), "exact"
 
     target_size = _extract_size_mm(atlan_code)
-    if target_size is None:
-        return None, 0, "none"
-
     comp_subset = comp_rows[comp_rows["Competitor"] == competitor_name].copy()
-    comp_subset["_size"] = comp_subset["AtlanReference"].apply(_extract_size_mm)
-    size_matches = comp_subset[comp_subset["_size"] == target_size].dropna(subset=["PricePerM"])
-    if size_matches.empty:
+    if comp_subset.empty:
         return None, 0, "none"
-    return float(size_matches["PricePerM"].mean()), len(size_matches), "size_fallback"
+    comp_subset["_size"] = comp_subset["AtlanReference"].apply(_extract_size_mm)
+
+    if target_size is not None:
+        size_matches = comp_subset[comp_subset["_size"] == target_size].dropna(subset=["PriceEach"])
+        if not size_matches.empty:
+            return float(size_matches["PriceEach"].mean()), len(size_matches), "size_fallback"
+
+    # Nearest-size fallback: this competitor has data, just not for this
+    # exact size — use whichever size they do have that's numerically closest
+    usable = comp_subset.dropna(subset=["PriceEach"]).copy()
+    usable = usable[usable["_size"].notna()]
+    if usable.empty or target_size is None:
+        return None, 0, "none"
+    usable["_size_num"] = usable["_size"].astype(float)
+    target_num = float(target_size)
+    usable["_distance"] = (usable["_size_num"] - target_num).abs()
+    nearest_size = usable.loc[usable["_distance"].idxmin(), "_size"]
+    nearest_matches = usable[usable["_size"] == nearest_size]
+    return float(nearest_matches["PriceEach"].mean()), len(nearest_matches), "nearest_size"
 
 
 # ---------------------------------------------------------------------------
@@ -530,21 +553,32 @@ def calculate_delivery(delivery: dict, global_inputs: dict, region_key: str) -> 
             rrp_per_m = safe_divide(raw_each_price, stock_length_m)
             cost_per_m = round(rrp_per_m * COST_FACTOR, 4)
 
+        # Stock length is needed regardless of override, to convert this
+        # line's $/m figures into $/unit for peer comparison (competitors
+        # are compared by unit price, not $/m — see build_peer_comparison)
+        stock_length_m_for_units = product.get("stock_length_m", 6.0) or 6.0
+
         net_price_per_m = rrp_per_m * (1 - discount_pct / 100)
         rrp_revenue = rrp_per_m * quantity_m
         revenue = net_price_per_m * quantity_m
         product_cost = cost_per_m * quantity_m
         total_delivery_revenue += revenue
 
+        units = safe_divide(quantity_m, stock_length_m_for_units)
+
         temp_rows.append(
             {
                 "Delivery": f"Delivery {delivery['id']}",
                 "Item": item_name,
                 "Quantity m": quantity_m,
+                "Stock Length (m)": stock_length_m_for_units,
+                "Units": units,
                 "RRP / m": rrp_per_m,
                 "Cost / m": cost_per_m,
                 "Discount %": discount_pct,
                 "Net Price / m": net_price_per_m,
+                "Net Price Each": net_price_per_m * stock_length_m_for_units,
+                "RRP Each": rrp_per_m * stock_length_m_for_units,
                 "RRP Revenue": rrp_revenue,
                 "Revenue": revenue,
                 "Product Cost": product_cost,
@@ -587,14 +621,19 @@ def build_peer_comparison(
     total_freight: float,
     peer_freight: Dict[str, float] = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Compares Atlan's package against each competitor on a PER-UNIT basis
+    (price per pipe), not per-metre. Quantity is a count of physical units
+    and NetSuite/competitor prices are both quoted per unit, so comparing
+    $/unit avoids introducing error from stock-length assumptions that may
+    not match what a competitor actually quoted."""
     if peer_freight is None:
         peer_freight = {}
 
     detail_df = detail_df.copy()
     detail_df["_atlan_code"] = detail_df["Item"].apply(lambda n: get_item_code(netsuite_df, n) or "")
 
-    atlan_qty = detail_df["Quantity m"].sum()
-    atlan_package = sum(line["Net Price / m"] * line["Quantity m"] for _, line in detail_df.iterrows())
+    atlan_units = detail_df["Units"].sum()
+    atlan_package = sum(line["Net Price Each"] * line["Units"] for _, line in detail_df.iterrows())
 
     competitor_names = sorted(competitor_rows["Competitor"].dropna().unique().tolist())
     summary_rows = []
@@ -605,27 +644,30 @@ def build_peer_comparison(
         matched_any = False
         for _, line in detail_df.iterrows():
             atlan_code = line["_atlan_code"]
-            qty = line["Quantity m"]
-            atlan_net_m = line["Net Price / m"]
-            atlan_line_total = atlan_net_m * qty
+            units = line["Units"]
+            atlan_net_each = line["Net Price Each"]
+            atlan_line_total = atlan_net_each * units
 
-            comp_price_m, n_records, match_type = get_competitor_price_for_code(competitor_rows, comp_name, atlan_code)
-            if comp_price_m is None:
-                comp_price_m = 0.0
+            comp_price_each, n_records, match_type = get_competitor_price_for_code(competitor_rows, comp_name, atlan_code)
+            if comp_price_each is None:
+                comp_price_each = 0.0
             else:
                 matched_any = True
-            comp_line_total = comp_price_m * qty
+            comp_line_total = comp_price_each * units
             comp_package += comp_line_total
 
             line_rows.append({
                 "Competitor": comp_name,
                 "Item": line["Item"],
                 "Atlan Reference": atlan_code,
-                "Comp. $/m": comp_price_m,
-                "Match Type": {"exact": "Exact", "size_fallback": "Approx (same size)", "none": "No match"}[match_type],
+                "Comp. $/Unit": comp_price_each,
+                "Match Type": {
+                    "exact": "Exact", "size_fallback": "Approx (same size)",
+                    "nearest_size": "Approx (nearest size)", "none": "No match",
+                }[match_type],
                 "Records Matched": n_records,
-                "Atlan Net $/m": atlan_net_m,
-                "Qty m": qty,
+                "Atlan Net $/Unit": atlan_net_each,
+                "Units": units,
                 "Comp. Line Total": comp_line_total,
                 "Atlan Line Total": atlan_line_total,
                 "Line $ Diff": atlan_line_total - comp_line_total,
@@ -640,7 +682,7 @@ def build_peer_comparison(
             "Product Package": comp_package,
             "Freight": comp_freight,
             "Total Package": comp_package + comp_freight,
-            "Avg $/m": safe_divide(comp_package, atlan_qty),
+            "Avg $/Unit": safe_divide(comp_package, atlan_units),
         })
 
     summary_rows.append({
@@ -648,7 +690,7 @@ def build_peer_comparison(
         "Product Package": atlan_package,
         "Freight": total_freight,
         "Total Package": atlan_package + total_freight,
-        "Avg $/m": safe_divide(atlan_package, atlan_qty),
+        "Avg $/Unit": safe_divide(atlan_package, atlan_units),
     })
 
     summary_df = pd.DataFrame(summary_rows).sort_values("Total Package").reset_index(drop=True)
@@ -708,20 +750,20 @@ def build_excel_export(
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         _write_df_sheet(
             writer, detail_df, "Package Detail",
-            currency_cols=["RRP / m", "Cost / m", "Net Price / m", "RRP Revenue", "Revenue",
-                           "Product Cost", "Freight Allocated", "Total Cost", "Contribution $",
-                           "RRP Contribution $", "Margin Lost $"],
+            currency_cols=["RRP / m", "Cost / m", "Net Price / m", "Net Price Each", "RRP Each",
+                           "RRP Revenue", "Revenue", "Product Cost", "Freight Allocated",
+                           "Total Cost", "Contribution $", "RRP Contribution $", "Margin Lost $"],
             title=f"Atlan Package Detail — {region_key}",
         )
         _write_df_sheet(
             writer, summary_df, "Peer Comparison Summary",
-            currency_cols=["Product Package", "Freight", "Total Package", "Avg $/m"],
+            currency_cols=["Product Package", "Freight", "Total Package", "Avg $/Unit"],
             title=f"Atlan vs Competitors — Total Package Comparison ({region_key})",
         )
         if not line_df.empty:
             _write_df_sheet(
                 writer, line_df, "Line-by-Line Breakdown",
-                currency_cols=["Comp. $/m", "Atlan Net $/m", "Comp. Line Total", "Atlan Line Total", "Line $ Diff"],
+                currency_cols=["Comp. $/Unit", "Atlan Net $/Unit", "Comp. Line Total", "Atlan Line Total", "Line $ Diff"],
                 title="Line-by-Line: Atlan vs Each Competitor, per Item",
             )
         display_cols = [c for c in COMPETITOR_EXPECTED_COLUMNS if c in competitor_rows_region.columns] + (
@@ -729,7 +771,7 @@ def build_excel_export(
         )
         _write_df_sheet(
             writer, competitor_rows_region[display_cols], "Competitor Raw Data",
-            currency_cols=["TotalPrice", "Freight", "PricePerM"],
+            currency_cols=["TotalPrice", "Freight", "PriceEach", "PricePerM"],
             title=f"Raw Competitor Submissions — {region_key}",
         )
     return buffer.getvalue()
@@ -1137,14 +1179,15 @@ try:
             st.caption(
                 f"Competitor prices filtered to {region_key} / {', '.join(COMPETITOR_STATE_MAP.get(region_key, [region_key]))} region. "
                 f"{len(competitor_rows_region):,} approved records available. "
-                f"Matching tries the exact Atlan Reference code first (e.g. ATF300.8); if a competitor has no "
-                f"quote for that exact code, it falls back to matching by pipe size only (flagged 'Approx' below)."
+                f"Compared on a **per-unit** basis (price per pipe), not per-metre — matching tries the exact "
+                f"Atlan Reference code first (e.g. ATF300.8), then falls back to the same size (fitting vs pipe), "
+                f"then to whichever size that competitor DOES have that's numerically closest, if needed."
             )
 
             if not summary_df.empty:
                 st.dataframe(
                     format_display_df(summary_df, {
-                        "Avg $/m": "${:,.2f}",
+                        "Avg $/Unit": "${:,.2f}",
                         "Product Package": "${:,.0f}",
                         "Freight": "${:,.0f}",
                         "Total Package": "${:,.0f}",
@@ -1167,11 +1210,11 @@ try:
 
             if not line_df.empty:
                 with st.expander("Line-by-line competitor breakdown", expanded=False):
-                    st.caption("For each Atlan line item, matched against competitor submissions — check 'Match Type' to see whether it's an exact code match or an approximate same-size match.")
+                    st.caption("For each Atlan line item, matched against competitor submissions on a per-unit basis — check 'Match Type' to see whether it's an exact code match, a same-size approximation, or a nearest-available-size approximation.")
                     fmt = {
-                        "Comp. $/m": "${:,.2f}",
-                        "Atlan Net $/m": "${:,.2f}",
-                        "Qty m": "{:,.0f}",
+                        "Comp. $/Unit": "${:,.2f}",
+                        "Atlan Net $/Unit": "${:,.2f}",
+                        "Units": "{:,.1f}",
                         "Comp. Line Total": "${:,.0f}",
                         "Atlan Line Total": "${:,.0f}",
                         "Line $ Diff": "${:,.0f}",
@@ -1179,9 +1222,9 @@ try:
                     st.dataframe(format_display_df(line_df, fmt), width="stretch", hide_index=True)
 
             with st.expander("Raw competitor records for this region", expanded=False):
-                display_cols = [c for c in COMPETITOR_EXPECTED_COLUMNS if c in competitor_rows_region.columns] + ["PricePerM"]
+                display_cols = [c for c in COMPETITOR_EXPECTED_COLUMNS if c in competitor_rows_region.columns] + ["PriceEach", "PricePerM"]
                 st.dataframe(
-                    format_display_df(competitor_rows_region[display_cols], {"PricePerM": "${:,.2f}", "TotalPrice": "${:,.0f}", "Freight": "${:,.0f}"}),
+                    format_display_df(competitor_rows_region[display_cols], {"PriceEach": "${:,.2f}", "PricePerM": "${:,.2f}", "TotalPrice": "${:,.0f}", "Freight": "${:,.0f}"}),
                     width="stretch",
                     hide_index=True,
                 )
@@ -1204,10 +1247,14 @@ with st.expander("Detailed Product Output", expanded=False):
         st.dataframe(
             format_display_df(detail_df, {
                 "Quantity m": "{:,.0f}",
+                "Stock Length (m)": "{:,.2f}",
+                "Units": "{:,.1f}",
                 "RRP / m": "${:,.2f}",
                 "Cost / m": "${:,.2f}",
                 "Discount %": "{:.0f}%",
                 "Net Price / m": "${:,.2f}",
+                "Net Price Each": "${:,.2f}",
+                "RRP Each": "${:,.2f}",
                 "RRP Revenue": "${:,.0f}",
                 "Revenue": "${:,.0f}",
                 "Product Cost": "${:,.0f}",
